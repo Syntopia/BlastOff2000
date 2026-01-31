@@ -1,6 +1,6 @@
 # Blast Off 2000
 
-Web-based remake of the classic Gravity Force with WebGL rendering, CRT/VHS post-processing, and arcade-inspired audio.
+Simple vibe-coded arcade game with WebGL rendering, CRT/VHS post-processing, and arcade-inspired audio.
 
 ## Features
 - WebGL2 renderer with ship physics, thrust, rotation, and collision against terrain, rocks, landing pads, and chasing monsters.
