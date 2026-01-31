@@ -94,8 +94,10 @@ const POST_FRAGMENT_SRC = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_scene;
+uniform sampler2D u_prev;
 uniform vec2 u_resolution;
 uniform float u_time;
+uniform float u_motionMix;
 out vec4 outColor;
 
 // barrel distortion
@@ -126,6 +128,16 @@ float rand(vec2 co) {
   return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453);
 }
 
+// ACES filmic tone mapping
+vec3 ACESFilm(vec3 x) {
+  float a = 2.51;
+  float b = 0.03;
+  float c = 2.43;
+  float d = 0.59;
+  float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
 void main() {
   vec2 uv = v_uv;
   // line wobble and occasional VHS-style horizontal jitter
@@ -145,8 +157,12 @@ void main() {
   col.g = texture(u_scene, uvCurved).g;
   col.b = texture(u_scene, uvCurved - ca).b;
 
-  // bloom
-  col = mix(col, bloom(uvCurved), 0.88);
+  // motion blur by blending previous frame
+  vec3 prevCol = texture(u_prev, uvCurved).rgb;
+  col = mix(prevCol, col, u_motionMix);
+
+  // bloom disabled
+  // col = mix(col, bloom(uvCurved), 0.25);
 
   // color bleed (luma-weighted horizontal smear)
   float luma = dot(col, vec3(0.299, 0.587, 0.114));
@@ -165,10 +181,28 @@ void main() {
   float vig = vignette(uvCurved);
   col *= mix(1.0, vig, 0.25) + 0.04;
 
+  // tone mapping
+  col = ACESFilm(col * 1.2);
+
   // film grain
-  float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * 0.25;
+  float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * 0.15;
   col += g;
 
+  outColor = vec4(col, 1.0);
+}`;
+
+const ACCUM_FRAGMENT_SRC = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_scene;
+uniform sampler2D u_prev;
+uniform float u_decay;
+uniform float u_gain;
+out vec4 outColor;
+void main() {
+  vec3 scene = texture(u_scene, v_uv).rgb;
+  vec3 prev = texture(u_prev, v_uv).rgb;
+  vec3 col = prev * u_decay + scene * u_gain;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -458,8 +492,18 @@ class Renderer {
     this.postProgram = createProgram(gl, POST_VERTEX_SRC, POST_FRAGMENT_SRC);
     this.postPosLoc = gl.getAttribLocation(this.postProgram, 'a_position');
     this.postSamplerLoc = gl.getUniformLocation(this.postProgram, 'u_scene');
+    this.postPrevLoc = gl.getUniformLocation(this.postProgram, 'u_prev');
     this.postResLoc = gl.getUniformLocation(this.postProgram, 'u_resolution');
     this.postTimeLoc = gl.getUniformLocation(this.postProgram, 'u_time');
+    this.postMotionMixLoc = gl.getUniformLocation(this.postProgram, 'u_motionMix');
+
+    // Accumulation program for motion trails
+    this.accumProgram = createProgram(gl, POST_VERTEX_SRC, ACCUM_FRAGMENT_SRC);
+    this.accumPosLoc = gl.getAttribLocation(this.accumProgram, 'a_position');
+    this.accumSceneLoc = gl.getUniformLocation(this.accumProgram, 'u_scene');
+    this.accumPrevLoc = gl.getUniformLocation(this.accumProgram, 'u_prev');
+    this.accumDecayLoc = gl.getUniformLocation(this.accumProgram, 'u_decay');
+    this.accumGainLoc = gl.getUniformLocation(this.accumProgram, 'u_gain');
 
     this.postVao = gl.createVertexArray();
     this.postBuffer = createBuffer(gl, new Float32Array([
@@ -469,7 +513,12 @@ class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.postBuffer);
     gl.enableVertexAttribArray(this.postPosLoc);
     gl.vertexAttribPointer(this.postPosLoc, 2, gl.FLOAT, false, 0, 0);
+    // same quad for accumulation shader
+    gl.useProgram(this.accumProgram);
+    gl.enableVertexAttribArray(this.accumPosLoc);
+    gl.vertexAttribPointer(this.accumPosLoc, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
+    this.accumVao = this.postVao;
 
     this._createRenderTarget();
   }
@@ -486,7 +535,12 @@ class Renderer {
       halfHeight = base / aspect;
     }
     this.proj = ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, -1, 1);
-    this._resizeRenderTarget(width, height);
+    // Only resize render targets when dimensions actually change
+    if (this._rtWidth !== width || this._rtHeight !== height) {
+      this._resizeRenderTarget(width, height);
+      this._rtWidth = width;
+      this._rtHeight = height;
+    }
   }
 
   draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec) {
@@ -531,17 +585,49 @@ class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.colorTex);
     gl.uniform1i(this.postSamplerLoc, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.prevFront);
+    gl.uniform1i(this.postPrevLoc, 1);
     gl.uniform2f(this.postResLoc, gl.canvas.width, gl.canvas.height);
     gl.uniform1f(this.postTimeLoc, timeSec);
+    gl.uniform1f(this.postMotionMixLoc, 0.5);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindVertexArray(null);
+
+    // Accumulate current scene into prevBack: prevBack = mix(prevFront, colorTex, accumMix)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.prevFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.prevBack, 0);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.useProgram(this.accumProgram);
+    gl.bindVertexArray(this.accumVao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.colorTex);
+    gl.uniform1i(this.accumSceneLoc, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.prevFront);
+    gl.uniform1i(this.accumPrevLoc, 1);
+    gl.uniform1f(this.accumDecayLoc, 0.8);
+    gl.uniform1f(this.accumGainLoc, 0.1);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // swap front/back
+    const tmp = this.prevFront;
+    this.prevFront = this.prevBack;
+    this.prevBack = tmp;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   _createRenderTarget() {
     const gl = this.gl;
     this.fbo = gl.createFramebuffer();
     this.colorTex = gl.createTexture();
+    this.prevTexA = gl.createTexture();
+    this.prevTexB = gl.createTexture();
+    this.prevFront = this.prevTexA;
+    this.prevBack = this.prevTexB;
+    this.prevFbo = gl.createFramebuffer();
     this._resizeRenderTarget(gl.canvas.width, gl.canvas.height);
   }
 
@@ -554,9 +640,31 @@ class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    [this.prevTexA, this.prevTexB].forEach((tex) => {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    });
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.colorTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // Clear both prev textures to black to avoid streaks
+    [this.prevTexA, this.prevTexB].forEach((tex) => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.prevFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    });
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.prevFront = this.prevTexA;
+    this.prevBack = this.prevTexB;
   }
 
   _drawTerrain(points) {
