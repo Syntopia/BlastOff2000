@@ -10,8 +10,10 @@ const laserAudio = document.getElementById('laser-audio');
 const popAudio = document.getElementById('pop-audio');
 const thrustAudio = document.getElementById('thrust-audio');
 const gameoverAudio = document.getElementById('gameover-audio');
+const introAudio = document.getElementById('intro-audio');
 const splashEl = document.getElementById('splash');
 const gameoverEl = document.getElementById('gameover');
+const lifeOverlayEl = document.getElementById('life-overlay');
 bgmEl.volume = 1.0;
 explosionAudio.volume = 0.75;
 laserAudio.volume = 0.65;
@@ -21,6 +23,8 @@ let audioStarted = false;
 let bgmFading = false;
 let gameOverArmed = false;
 let waitingForRestart = false;
+let inputLocked = true;
+let introStarted = false;
 const tracks = [
   '/static/audio/Zero-G Boss Rush.mp3',
   '/static/audio/Zero-G Boss Rush (1).mp3',
@@ -37,6 +41,32 @@ function playSound(el, volume = 1.0, rate = 1.0) {
   a.volume = volume;
   a.playbackRate = rate;
   a.play().catch(() => {});
+}
+
+function playIntro() {
+  if (!introAudio) return;
+  introAudio.loop = true;
+  introAudio.currentTime = 0;
+  introAudio.volume = 1.0;
+  introAudio.play().then(() => { introStarted = true; }).catch(() => {});
+}
+
+function stopIntro() {
+  if (!introAudio) return;
+  introAudio.pause();
+  introAudio.currentTime = 0;
+}
+
+function showLifeOverlay() {
+  if (!lifeOverlayEl) return;
+  const idx = 1 + Math.floor(Math.random() * 3);
+  lifeOverlayEl.src = `/static/overlay${idx}.png`;
+  lifeOverlayEl.classList.add('visible');
+}
+
+function hideLifeOverlay() {
+  if (!lifeOverlayEl) return;
+  lifeOverlayEl.classList.remove('visible');
 }
 
 function fadeOutBgm(duration = 1200) {
@@ -86,6 +116,8 @@ if (!statusEl) {
   statusEl = document.createElement('div');
 }
 statusEl.textContent = 'Preparing level…';
+playIntro();
+setTimeout(() => { if (!introStarted) playIntro(); }, 250);
 
 try {
   pickTrack();
@@ -97,11 +129,13 @@ try {
     hud,
     () => {
       if (!audioStarted) {
+        stopIntro();
         pickTrack();
         bgmEl.currentTime = 0;
         bgmEl.play().catch(() => {});
         audioStarted = true;
       }
+      hideLifeOverlay();
     },
     () => {
       fadeOutBgm(1200);
@@ -122,9 +156,13 @@ try {
       game.inputLocked = true;
       gameoverEl.style.display = 'flex';
       waitingForRestart = true;
+      hideLifeOverlay();
       gameoverAudio.currentTime = 0;
       gameoverAudio.play().catch(() => {});
-      setTimeout(() => { gameOverArmed = true; }, 5000);
+      setTimeout(() => { gameOverArmed = true; }, 2000);
+    },
+    (livesLeft) => {
+      showLifeOverlay();
     },
   );
   statusEl.textContent = 'Running';
@@ -141,6 +179,14 @@ try {
   window.addEventListener('keydown', hideSplash);
   window.addEventListener('mousedown', hideSplash);
   window.addEventListener('touchstart', hideSplash, { passive: true });
+
+  // In case autoplay was blocked, retry intro on first interaction until it succeeds.
+  const nudgeIntro = () => {
+    if (!introStarted) playIntro();
+  };
+  window.addEventListener('keydown', nudgeIntro, { once: true });
+  window.addEventListener('mousedown', nudgeIntro, { once: true });
+  window.addEventListener('touchstart', nudgeIntro, { once: true, passive: true });
 
   const restartHandler = () => {
     if (waitingForRestart && gameOverArmed) {

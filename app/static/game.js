@@ -138,7 +138,7 @@ void main() {
   // tiny chromatic aberration toward edges
   vec2 center = uvCurved - 0.5;
   float dist = length(center);
-  vec2 ca = center * dist * 0.06;
+  vec2 ca = center * dist * 0.11;
 
   vec3 col;
   col.r = texture(u_scene, uvCurved + ca).r;
@@ -489,7 +489,7 @@ class Renderer {
     this._resizeRenderTarget(width, height);
   }
 
-  draw(level, ship, thrusting, stateText, enemies, bullets, particles, timeSec) {
+  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec) {
     const gl = this.gl;
     // Always render to framebuffer then post-process
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
@@ -520,6 +520,7 @@ class Renderer {
     gl.uniform1f(this.materialLoc, 0.0);
     this._drawBullets(bullets);
     this._drawParticles(particles);
+    this._drawSquares(squares);
     this._drawShip(ship, thrusting, stateText);
 
     // Pass 2: postprocess to screen
@@ -681,7 +682,7 @@ class Renderer {
     if (ship.invuln > 0) {
       const segments = 32;
       const ringVerts = [];
-      const radius = SHIP_RADIUS + 0.6;
+      const radius = SHIP_RADIUS + 1.6; // larger ring while invulnerable/hidden
       for (let i = 0; i <= segments; i += 1) {
         const a = (i / segments) * Math.PI * 2;
         const x = ship.pos.x + Math.cos(a) * radius;
@@ -759,6 +760,29 @@ class Renderer {
       gl.drawArrays(gl.TRIANGLE_FAN, 0, segments + 2);
     });
   }
+
+  _drawSquares(squares) {
+    const gl = this.gl;
+    squares.forEach((s) => {
+      const half = s.size * 0.5;
+      const pts = [
+        { x: -half, y: -half },
+        { x: half, y: -half },
+        { x: half, y: half },
+        { x: -half, y: half },
+      ];
+      const verts = [];
+      pts.forEach((p) => {
+        const r = rotate(p, s.angle);
+        verts.push(s.pos.x + r.x, s.pos.y + r.y, ...s.color);
+      });
+      // close loop
+      const r0 = rotate(pts[0], s.angle);
+      verts.push(s.pos.x + r0.x, s.pos.y + r0.y, ...s.color);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW);
+      gl.drawArrays(gl.LINE_STRIP, 0, 5);
+    });
+  }
 }
 
 function rotate(point, angle) {
@@ -809,7 +833,7 @@ function multiplyMat4(a, b) {
 }
 
 export class Game {
-  constructor(gl, hudCallbacks, onThrustStart = () => {}, onDie = () => {}, onFire = () => {}, onEnemyPop = () => {}, onThrust = () => {}, onGameOver = () => {}) {
+  constructor(gl, hudCallbacks, onThrustStart = () => {}, onDie = () => {}, onFire = () => {}, onEnemyPop = () => {}, onThrust = () => {}, onGameOver = () => {}, onLifeLost = () => {}) {
     this.gl = gl;
     this.renderer = new Renderer(gl);
     this.level = new Level();
@@ -819,6 +843,7 @@ export class Game {
     this.bullets = [];
     this.particles = [];
     this.thrustParticles = [];
+    this.squareBursts = [];
     this.score = 0;
     this.displayScore = 0;
     this.input = new InputController(gl.canvas);
@@ -831,11 +856,14 @@ export class Game {
     this.onEnemyPop = onEnemyPop;
     this.onThrust = onThrust;
     this.onGameOver = onGameOver;
+    this.onLifeLost = onLifeLost;
     this._wasThrusting = false;
     this.postEnabled = true;
     this.inputLocked = false;
     this._status = 'initializing';
     this._explosionTimer = 0;
+    this._gameOverDelay = -1;
+    this._gameOverTriggered = false;
     this.cameraZoom = CAMERA_ZOOM_RECOVER;
     this._cameraZoomTarget = CAMERA_ZOOM_RECOVER;
     this._fireCooldown = 0;
@@ -901,6 +929,14 @@ export class Game {
     if (this.ship.state === 'crashed') {
       this._explosionTimer -= dt;
       this._updateParticles(dt);
+      this._updateSquares(dt);
+      if (this.ship.lives <= 0 && this._gameOverDelay > 0) {
+        this._gameOverDelay -= dt;
+        if (this._gameOverDelay <= 0 && !this._gameOverTriggered) {
+          this._gameOverTriggered = true;
+          this.onGameOver();
+        }
+      }
       if (this._explosionTimer <= 0) {
         if (this.ship.lives > 0) {
           this._resetShip(true);
@@ -941,6 +977,7 @@ export class Game {
     this._updateBullets(dt);
     this._updateParticles(dt);
     this._updateThrustParticles(dt);
+    this._updateSquares(dt);
     this._updateRespawns(dt);
     this._checkBounds();
     this._checkCollision();
@@ -1065,14 +1102,18 @@ export class Game {
     this._explosionTimer = EXPLOSION_DURATION;
     this.onDie();
     if (this.ship.lives <= 0) {
-      this.onGameOver();
+      this._gameOverDelay = 4.0;
+      this._gameOverTriggered = false;
       return;
     }
+    this.onLifeLost(this.ship.lives);
   }
 
   _resetShip(hard) {
     if (this.ship.lives <= 0) return;
     this.ship.reset(hard);
+    this._gameOverDelay = -1;
+    this._gameOverTriggered = false;
     this._status = 'running';
   }
 
@@ -1087,6 +1128,7 @@ export class Game {
       this.enemies,
       this.bullets,
       [...this.particles, ...this.thrustParticles],
+      this.squareBursts,
       performance.now() / 1000,
     );
   }
@@ -1209,6 +1251,18 @@ export class Game {
     this.particles = alive;
   }
 
+  _updateSquares(dt) {
+    const alive = [];
+    this.squareBursts.forEach((s) => {
+      s.life -= dt;
+      if (s.life <= 0) return;
+      s.angle += s.angVel * dt;
+      s.size *= s.growth;
+      alive.push(s);
+    });
+    this.squareBursts = alive;
+  }
+
   _updateThrustParticles(dt) {
     const alive = [];
     this.thrustParticles.forEach((p) => {
@@ -1230,6 +1284,9 @@ export class Game {
     const baseAng = Math.atan2(dirY, dirX);
     const parts = this._makeExplosion(enemy.pos, ENEMY_POP_PARTICLES, 1.2, [1.0, 0.9, 0.35], enemy.radius * 0.6, baseAng, Math.PI / 2);
     this.particles.push(...parts);
+    if (enemy.size === 4) {
+      this._spawnSquareBurst(enemy.pos);
+    }
   }
 
   _makeExplosion(origin, count, duration, colorBase, sizeScale = 1.0, baseAngle = null, spread = Math.PI * 2) {
@@ -1246,6 +1303,21 @@ export class Game {
       parts.push({ pos: { ...origin }, vel, life, maxLife: life, size, color: cJitter });
     }
     return parts;
+  }
+
+  _spawnSquareBurst(origin) {
+    const count = 3 + Math.floor(Math.random() * 2); // 3-4 squares
+    for (let i = 0; i < count; i += 1) {
+      this.squareBursts.push({
+        pos: { ...origin },
+        size: 0.4 + Math.random() * 0.25,
+        angle: Math.random() * Math.PI * 2,
+        angVel: (Math.random() - 0.5) * 2.5,
+        growth: 1.28 + Math.random() * 0.08,
+        life: 1.6 + Math.random() * 0.6,
+        color: [1.0, 0.9, 0.7],
+      });
+    }
   }
 
   _addScore(delta) {

@@ -52,8 +52,8 @@ html, body {
 }
 
 .score-topleft {
-  top: 12px;
-  left: 14px;
+  top: 32px;
+  left: 32px;
   right: auto;
   bottom: auto;
 }
@@ -110,6 +110,25 @@ html, body {
   pointer-events: none;
   z-index: 4;
   filter: drop-shadow(0 3px 8px rgba(0,0,0,0.35));
+}
+
+.life-overlay {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 960px;
+  max-width: 90vw;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  z-index: 3;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+}
+
+.life-overlay.visible {
+  opacity: 1;
 }
 
 #gameover {
