@@ -98,6 +98,14 @@ uniform sampler2D u_prev;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_motionMix;
+uniform float u_exposure;
+uniform float u_contrast;
+uniform float u_saturation;
+uniform float u_filmGrain;
+uniform float u_vignette;
+uniform float u_chromatic;
+uniform float u_scanlines;
+uniform float u_barrelDistort;
 out vec4 outColor;
 
 // barrel distortion
@@ -145,12 +153,12 @@ void main() {
   float jitterEvent = step(0.995, fract(sin(u_time * 3.17) * 43758.5453));
   float jitter = jitterEvent * (0.01 * sin(u_time * 60.0));
   float scan = sin(uv.y * u_resolution.y * 0.5 * 3.14159) * 5.0;
-  vec2 uvCurved = barrel(uv + vec2(lineWobble + jitter, 0.0), 0.03);
+  vec2 uvCurved = barrel(uv + vec2(lineWobble + jitter, 0.0), u_barrelDistort);
 
-  // tiny chromatic aberration toward edges
+  // chromatic aberration toward edges
   vec2 center = uvCurved - 0.5;
   float dist = length(center);
-  vec2 ca = center * dist * 0.11;
+  vec2 ca = center * dist * u_chromatic;
 
   vec3 col;
   col.r = texture(u_scene, uvCurved + ca).r;
@@ -160,9 +168,6 @@ void main() {
   // motion blur by blending previous frame
   vec3 prevCol = texture(u_prev, uvCurved).rgb;
   col = mix(prevCol, col, u_motionMix);
-
-  // bloom disabled
-  // col = mix(col, bloom(uvCurved), 0.25);
 
   // color bleed (luma-weighted horizontal smear)
   float luma = dot(col, vec3(0.299, 0.587, 0.114));
@@ -175,24 +180,24 @@ void main() {
   col = mix(col, bleedCol, 0.5);
 
   // scanlines
-  col *= 1.0 - scan * 0.12;
+  col *= 1.0 - scan * u_scanlines;
 
-  // vignette softened
+  // vignette
   float vig = vignette(uvCurved);
-  col *= mix(1.0, vig, 0.25) + 0.04;
+  col *= mix(1.0, vig, u_vignette) + 0.04;
 
   // tone mapping
-  col = ACESFilm(col * 1.2);
+  col = ACESFilm(col * u_exposure);
 
-  // contrast boost
-  col = (col - 0.5) * 1.3 + 0.5;
+  // contrast
+  col = (col - 0.5) * u_contrast + 0.5;
 
-  // saturation boost
+  // saturation
   float grey = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(grey), col, 1.4);
+  col = mix(vec3(grey), col, u_saturation);
 
   // film grain
-  float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * 0.15;
+  float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * u_filmGrain;
   col += g;
 
   outColor = vec4(col, 1.0);
@@ -298,6 +303,105 @@ const ROCKS = [
   { x: WORLD_CENTER.x, y: WORLD_CENTER.y + 100, r: 9 },
 ];
 
+const POST_CONFIG = {
+  motionMix: 0.5,
+  trailDecay: 0.8,
+  trailGain: 0.1,
+  exposure: 1.2,
+  contrast: 1.3,
+  saturation: 1.4,
+  filmGrain: 0.15,
+  vignette: 0.25,
+  chromatic: 0.11,
+  scanlines: 0.12,
+  barrelDistort: 0.03,
+};
+
+class DebugUI {
+  constructor(config) {
+    this.config = config;
+    this.visible = false;
+    this.panel = null;
+    this._create();
+  }
+
+  _create() {
+    this.panel = document.createElement('div');
+    this.panel.id = 'debug-panel';
+    this.panel.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.85);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 15px;
+      border-radius: 8px;
+      z-index: 1000;
+      display: none;
+      min-width: 280px;
+    `;
+
+    const title = document.createElement('div');
+    title.textContent = 'Post Effects Debug (2 to close)';
+    title.style.cssText = 'margin-bottom: 15px; font-size: 14px; color: #0ff;';
+    this.panel.appendChild(title);
+
+    const params = [
+      { key: 'motionMix', label: 'Motion Blur', min: 0, max: 1, step: 0.05 },
+      { key: 'trailDecay', label: 'Trail Decay', min: 0, max: 0.99, step: 0.01 },
+      { key: 'trailGain', label: 'Trail Gain', min: 0, max: 1, step: 0.05 },
+      { key: 'exposure', label: 'Exposure', min: 0.5, max: 3, step: 0.1 },
+      { key: 'contrast', label: 'Contrast', min: 0.5, max: 2, step: 0.05 },
+      { key: 'saturation', label: 'Saturation', min: 0, max: 2, step: 0.05 },
+      { key: 'filmGrain', label: 'Film Grain', min: 0, max: 0.5, step: 0.01 },
+      { key: 'vignette', label: 'Vignette', min: 0, max: 1, step: 0.05 },
+      { key: 'chromatic', label: 'Chromatic Ab.', min: 0, max: 0.3, step: 0.01 },
+      { key: 'scanlines', label: 'Scanlines', min: 0, max: 0.3, step: 0.01 },
+      { key: 'barrelDistort', label: 'Barrel Distort', min: 0, max: 0.1, step: 0.005 },
+    ];
+
+    params.forEach((p) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-bottom: 8px; display: flex; align-items: center;';
+
+      const label = document.createElement('span');
+      label.textContent = p.label;
+      label.style.cssText = 'width: 100px; display: inline-block;';
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = p.min;
+      slider.max = p.max;
+      slider.step = p.step;
+      slider.value = this.config[p.key];
+      slider.style.cssText = 'width: 100px; margin: 0 10px;';
+
+      const value = document.createElement('span');
+      value.textContent = this.config[p.key].toFixed(2);
+      value.style.cssText = 'width: 40px; text-align: right;';
+
+      slider.addEventListener('input', () => {
+        this.config[p.key] = parseFloat(slider.value);
+        value.textContent = this.config[p.key].toFixed(2);
+      });
+
+      row.appendChild(label);
+      row.appendChild(slider);
+      row.appendChild(value);
+      this.panel.appendChild(row);
+    });
+
+    document.body.appendChild(this.panel);
+  }
+
+  toggle() {
+    this.visible = !this.visible;
+    this.panel.style.display = this.visible ? 'block' : 'none';
+  }
+}
+
 class InputController {
   constructor(canvas) {
     this.left = false;
@@ -307,6 +411,7 @@ class InputController {
     this.pause = false;
     this.reset = false;
     this.togglePost = false;
+    this.toggleDebug = false;
     this._bindKeyboard();
     this._bindTouch(canvas);
   }
@@ -327,6 +432,12 @@ class InputController {
     const t = this.togglePost;
     this.togglePost = false;
     return t;
+  }
+
+  consumeDebugToggle() {
+    const d = this.toggleDebug;
+    this.toggleDebug = false;
+    return d;
   }
 
   _bindKeyboard() {
@@ -352,6 +463,8 @@ class InputController {
           if (down) this.pause = true; break;
         case 'Digit1':
           if (down) this.togglePost = true; break;
+        case 'Digit2':
+          if (down) this.toggleDebug = true; break;
         default:
           break;
       }
@@ -503,6 +616,14 @@ class Renderer {
     this.postResLoc = gl.getUniformLocation(this.postProgram, 'u_resolution');
     this.postTimeLoc = gl.getUniformLocation(this.postProgram, 'u_time');
     this.postMotionMixLoc = gl.getUniformLocation(this.postProgram, 'u_motionMix');
+    this.postExposureLoc = gl.getUniformLocation(this.postProgram, 'u_exposure');
+    this.postContrastLoc = gl.getUniformLocation(this.postProgram, 'u_contrast');
+    this.postSaturationLoc = gl.getUniformLocation(this.postProgram, 'u_saturation');
+    this.postFilmGrainLoc = gl.getUniformLocation(this.postProgram, 'u_filmGrain');
+    this.postVignetteLoc = gl.getUniformLocation(this.postProgram, 'u_vignette');
+    this.postChromaticLoc = gl.getUniformLocation(this.postProgram, 'u_chromatic');
+    this.postScanlinesLoc = gl.getUniformLocation(this.postProgram, 'u_scanlines');
+    this.postBarrelDistortLoc = gl.getUniformLocation(this.postProgram, 'u_barrelDistort');
 
     // Accumulation program for motion trails
     this.accumProgram = createProgram(gl, POST_VERTEX_SRC, ACCUM_FRAGMENT_SRC);
@@ -550,7 +671,7 @@ class Renderer {
     }
   }
 
-  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true) {
+  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true, config = POST_CONFIG) {
     const gl = this.gl;
     // Render to framebuffer if post-processing, otherwise directly to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, postEnabled ? this.fbo : null);
@@ -603,7 +724,15 @@ class Renderer {
     gl.uniform1i(this.postPrevLoc, 1);
     gl.uniform2f(this.postResLoc, gl.canvas.width, gl.canvas.height);
     gl.uniform1f(this.postTimeLoc, timeSec);
-    gl.uniform1f(this.postMotionMixLoc, 0.5);
+    gl.uniform1f(this.postMotionMixLoc, config.motionMix);
+    gl.uniform1f(this.postExposureLoc, config.exposure);
+    gl.uniform1f(this.postContrastLoc, config.contrast);
+    gl.uniform1f(this.postSaturationLoc, config.saturation);
+    gl.uniform1f(this.postFilmGrainLoc, config.filmGrain);
+    gl.uniform1f(this.postVignetteLoc, config.vignette);
+    gl.uniform1f(this.postChromaticLoc, config.chromatic);
+    gl.uniform1f(this.postScanlinesLoc, config.scanlines);
+    gl.uniform1f(this.postBarrelDistortLoc, config.barrelDistort);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindVertexArray(null);
@@ -620,8 +749,8 @@ class Renderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.prevFront);
     gl.uniform1i(this.accumPrevLoc, 1);
-    gl.uniform1f(this.accumDecayLoc, 0.8);
-    gl.uniform1f(this.accumGainLoc, 0.1);
+    gl.uniform1f(this.accumDecayLoc, config.trailDecay);
+    gl.uniform1f(this.accumGainLoc, config.trailGain);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     // swap front/back
@@ -980,6 +1109,8 @@ export class Game {
     this.onLifeLost = onLifeLost;
     this._wasThrusting = false;
     this.postEnabled = true;
+    this.postConfig = POST_CONFIG;
+    this.debugUI = new DebugUI(this.postConfig);
     this.inputLocked = false;
     this._status = 'initializing';
     this._explosionTimer = 0;
@@ -1012,6 +1143,9 @@ export class Game {
     if (this.input.consumePostToggle()) {
       this.postEnabled = !this.postEnabled;
       this._log(`Post effects toggled -> ${this.postEnabled}`);
+    }
+    if (this.input.consumeDebugToggle()) {
+      this.debugUI.toggle();
     }
 
     if (!this.paused) {
@@ -1255,6 +1389,7 @@ export class Game {
       this.squareBursts,
       performance.now() / 1000,
       this.postEnabled,
+      this.postConfig,
     );
   }
 
