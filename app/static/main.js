@@ -12,6 +12,13 @@ const introAudio = document.getElementById('intro-audio');
 const splashEl = document.getElementById('splash');
 const gameoverEl = document.getElementById('gameover');
 const lifeOverlayEl = document.getElementById('life-overlay');
+const titleOverlayEl = document.getElementById('title-overlay');
+
+// Hide HTML overlays - using WebGL rendering instead
+if (splashEl) splashEl.style.display = 'none';
+if (gameoverEl) gameoverEl.style.display = 'none';
+if (lifeOverlayEl) lifeOverlayEl.style.display = 'none';
+if (titleOverlayEl) titleOverlayEl.style.display = 'none';
 bgmEl.volume = 1.0;
 explosionAudio.volume = 0.75;
 laserAudio.volume = 0.65;
@@ -55,16 +62,15 @@ function stopIntro() {
   introAudio.currentTime = 0;
 }
 
+// Life overlay functions now use game's WebGL overlay system
+let gameRef = null;
+
 function showLifeOverlay() {
-  if (!lifeOverlayEl) return;
-  const idx = 1 + Math.floor(Math.random() * 3);
-  lifeOverlayEl.src = `/static/overlay${idx}.png`;
-  lifeOverlayEl.classList.add('visible');
+  if (gameRef) gameRef.showLifeOverlay();
 }
 
 function hideLifeOverlay() {
-  if (!lifeOverlayEl) return;
-  lifeOverlayEl.classList.remove('visible');
+  if (gameRef) gameRef.hideLifeOverlay();
 }
 
 function fadeOutBgm(duration = 1200) {
@@ -145,7 +151,7 @@ try {
     },
     () => {
       game.inputLocked = true;
-      gameoverEl.style.display = 'flex';
+      game.showOverlay('gameover');
       waitingForRestart = true;
       hideLifeOverlay();
       gameoverAudio.currentTime = 0;
@@ -158,9 +164,11 @@ try {
   );
   statusEl.textContent = 'Running';
   game.inputLocked = true;
+  gameRef = game; // Set reference for overlay functions
   game.start();
   const hideSplash = () => {
-    splashEl.style.display = 'none';
+    game.hideOverlay('splash');
+    // Keep title visible during gameplay
     inputLocked = false;
     game.inputLocked = false;
     window.removeEventListener('keydown', hideSplash);

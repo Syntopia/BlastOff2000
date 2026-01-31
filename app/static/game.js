@@ -54,6 +54,32 @@ const VECTOR_FONT = {
   "'": [2,0,2,2],
 };
 
+// Textured quad shader for overlays
+const OVERLAY_VERTEX_SRC = `#version 300 es
+precision highp float;
+in vec2 a_position;
+in vec2 a_texcoord;
+uniform mat4 u_proj;
+uniform vec2 u_pos;
+uniform vec2 u_size;
+out vec2 v_texcoord;
+void main() {
+  vec2 pos = a_position * u_size + u_pos;
+  v_texcoord = a_texcoord;
+  gl_Position = u_proj * vec4(pos, 0.0, 1.0);
+}`;
+
+const OVERLAY_FRAGMENT_SRC = `#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+uniform sampler2D u_texture;
+uniform float u_alpha;
+out vec4 outColor;
+void main() {
+  vec4 col = texture(u_texture, v_texcoord);
+  outColor = vec4(col.rgb, col.a * u_alpha);
+}`;
+
 const HUD_VERTEX_SRC = `#version 300 es
 precision highp float;
 in vec2 a_position;
@@ -184,6 +210,7 @@ uniform float u_colorFringe;
 uniform float u_staticNoise;
 uniform vec2 u_screenShake;
 uniform int u_colorLut;
+uniform float u_gamma;
 out vec4 outColor;
 
 // barrel distortion
@@ -246,24 +273,17 @@ vec3 phosphorGlow(vec2 uv, vec3 col, float intensity) {
 
 // Color fringing - NTSC-style horizontal color bleed
 vec3 colorFringing(vec2 uv, vec3 col, float intensity) {
+  if (intensity <= 0.0) return col;
   vec2 texel = 1.0 / u_resolution;
-  // Sample neighbors for edge detection
-  float lumCenter = dot(col, vec3(0.299, 0.587, 0.114));
-  vec3 colLeft = texture(u_scene, uv - vec2(texel.x * 2.0, 0.0)).rgb;
-  vec3 colRight = texture(u_scene, uv + vec2(texel.x * 2.0, 0.0)).rgb;
-  float lumLeft = dot(colLeft, vec3(0.299, 0.587, 0.114));
-  float lumRight = dot(colRight, vec3(0.299, 0.587, 0.114));
-  // Detect edges
-  float edgeL = abs(lumCenter - lumLeft);
-  float edgeR = abs(lumCenter - lumRight);
-  float edge = max(edgeL, edgeR);
-  // Apply colored fringe on edges
+  // Stronger offset for visible effect
+  float offset = intensity * 0.005;
+  // Apply RGB channel separation
   vec3 fringe = vec3(
-    texture(u_scene, uv - vec2(texel.x * intensity * 2.0, 0.0)).r,
+    texture(u_scene, uv - vec2(offset, 0.0)).r,
     col.g,
-    texture(u_scene, uv + vec2(texel.x * intensity * 2.0, 0.0)).b
+    texture(u_scene, uv + vec2(offset, 0.0)).b
   );
-  return mix(col, fringe, edge * intensity);
+  return fringe;
 }
 
 // Static noise burst
@@ -381,6 +401,9 @@ void main() {
 
   // color LUT
   col = applyColorLut(col, u_colorLut);
+
+  // gamma correction
+  col = pow(col, vec3(1.0 / u_gamma));
 
   // film grain
   float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * u_filmGrain;
@@ -502,10 +525,11 @@ const POST_CONFIG = {
   scanlines: 0.12,
   barrelDistort: 0.03,
   phosphor: 0.15,
-  colorFringe: 0.4,
+  colorFringe: 0.0,
   staticNoise: 0.0,
   screenShake: 1.0,
   colorLut: 0, // 0=none, 1=amber, 2=cool, 3=neon, 4=noir
+  gamma: 1.0,
 };
 
 class DebugUI {
@@ -562,6 +586,7 @@ class DebugUI {
       { key: 'colorFringe', label: 'Color Fringe', min: 0, max: 1, step: 0.05 },
       { key: 'staticNoise', label: 'Static Noise', min: 0, max: 1, step: 0.05 },
       { key: 'screenShake', label: 'Screen Shake', min: 0, max: 2, step: 0.1 },
+      { key: 'gamma', label: 'Gamma', min: 1.0, max: 3.0, step: 0.1 },
     ];
 
     params.forEach((p) => {
@@ -877,6 +902,7 @@ class Renderer {
     this.postStaticNoiseLoc = gl.getUniformLocation(this.postProgram, 'u_staticNoise');
     this.postScreenShakeLoc = gl.getUniformLocation(this.postProgram, 'u_screenShake');
     this.postColorLutLoc = gl.getUniformLocation(this.postProgram, 'u_colorLut');
+    this.postGammaLoc = gl.getUniformLocation(this.postProgram, 'u_gamma');
 
     // Accumulation program for motion trails
     this.accumProgram = createProgram(gl, POST_VERTEX_SRC, ACCUM_FRAGMENT_SRC);
@@ -900,6 +926,35 @@ class Renderer {
     gl.vertexAttribPointer(this.accumPosLoc, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     this.accumVao = this.postVao;
+
+    // Overlay rendering setup
+    this.overlayProgram = createProgram(gl, OVERLAY_VERTEX_SRC, OVERLAY_FRAGMENT_SRC);
+    this.overlayPosLoc = gl.getAttribLocation(this.overlayProgram, 'a_position');
+    this.overlayTexcoordLoc = gl.getAttribLocation(this.overlayProgram, 'a_texcoord');
+    this.overlayProjLoc = gl.getUniformLocation(this.overlayProgram, 'u_proj');
+    this.overlayPosUniformLoc = gl.getUniformLocation(this.overlayProgram, 'u_pos');
+    this.overlaySizeLoc = gl.getUniformLocation(this.overlayProgram, 'u_size');
+    this.overlayTextureLoc = gl.getUniformLocation(this.overlayProgram, 'u_texture');
+    this.overlayAlphaLoc = gl.getUniformLocation(this.overlayProgram, 'u_alpha');
+
+    this.overlayVao = gl.createVertexArray();
+    this.overlayBuffer = createBuffer(gl, new Float32Array([
+      // position (x,y), texcoord (u,v)
+      -0.5, -0.5, 0, 1,
+       0.5, -0.5, 1, 1,
+      -0.5,  0.5, 0, 0,
+       0.5,  0.5, 1, 0,
+    ]));
+    gl.bindVertexArray(this.overlayVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.overlayBuffer);
+    gl.enableVertexAttribArray(this.overlayPosLoc);
+    gl.enableVertexAttribArray(this.overlayTexcoordLoc);
+    gl.vertexAttribPointer(this.overlayPosLoc, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(this.overlayTexcoordLoc, 2, gl.FLOAT, false, 16, 8);
+    gl.bindVertexArray(null);
+
+    this.overlayTextures = {};
+    this._loadOverlayTextures();
 
     // HUD rendering setup
     this.hudProgram = createProgram(gl, HUD_VERTEX_SRC, HUD_FRAGMENT_SRC);
@@ -939,7 +994,7 @@ class Renderer {
     }
   }
 
-  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true, config = POST_CONFIG, hudData = null) {
+  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true, config = POST_CONFIG, hudData = null, overlays = null) {
     const gl = this.gl;
     // Render to framebuffer if post-processing, otherwise directly to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, postEnabled ? this.fbo : null);
@@ -972,6 +1027,31 @@ class Renderer {
     this._drawParticles(particles);
     this._drawSquares(squares);
     this._drawShip(ship, thrusting, stateText);
+
+    // Draw overlays (into FBO so they get post-processed)
+    if (overlays) {
+      gl.bindVertexArray(null);
+      if (overlays.splash && overlays.splash.visible) {
+        this.drawOverlayCentered('splash', 0.8, overlays.splash.alpha);
+      }
+      if (overlays.title && overlays.title.visible) {
+        const w = gl.canvas.width;
+        const h = gl.canvas.height;
+        this.drawOverlay('title', w * 0.85, h - 160, 0.6, overlays.title.alpha);
+      }
+      if (overlays.gameover && overlays.gameover.visible) {
+        this.drawOverlayCentered('gameover', 0.9, overlays.gameover.alpha);
+      }
+      if (overlays.lifeOverlay && overlays.lifeOverlay.visible) {
+        const lifeName = 'life' + overlays.lifeOverlay.index;
+        const w = gl.canvas.width;
+        const overlay = this.overlayTextures[lifeName];
+        const scale = 0.8;
+        // Position so bottom of image aligns with screen bottom
+        const yPos = overlay && overlay.loaded ? (overlay.height * scale) / 2 : 200;
+        this.drawOverlay(lifeName, w * 0.35, yPos, scale, overlays.lifeOverlay.alpha);
+      }
+    }
 
     // Skip post-processing if disabled
     if (!postEnabled) {
@@ -1006,6 +1086,7 @@ class Renderer {
     gl.uniform1f(this.postStaticNoiseLoc, config.staticNoise);
     gl.uniform2f(this.postScreenShakeLoc, config.screenShakeX || 0, config.screenShakeY || 0);
     gl.uniform1i(this.postColorLutLoc, config.colorLut);
+    gl.uniform1f(this.postGammaLoc, config.gamma);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindVertexArray(null);
@@ -1035,7 +1116,7 @@ class Renderer {
 
     // Draw HUD overlay
     if (hudData) {
-      this.drawHUD(hudData);
+      this.drawHUD(hudData, overlays);
     }
   }
 
@@ -1312,6 +1393,78 @@ class Renderer {
     });
   }
 
+  _loadOverlayTextures() {
+    const gl = this.gl;
+    const images = [
+      { name: 'splash', src: '/static/blastoff.png' },
+      { name: 'title', src: '/static/title.png' },
+      { name: 'gameover', src: '/static/gameover.png' },
+      { name: 'life1', src: '/static/overlay1.png' },
+      { name: 'life2', src: '/static/overlay2.png' },
+      { name: 'life3', src: '/static/overlay3.png' },
+    ];
+
+    images.forEach(({ name, src }) => {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      // Placeholder 1x1 pixel until image loads
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,0]));
+
+      const img = new Image();
+      img.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        this.overlayTextures[name] = { texture: tex, width: img.width, height: img.height, loaded: true };
+      };
+      img.src = src;
+      this.overlayTextures[name] = { texture: tex, width: 1, height: 1, loaded: false };
+    });
+  }
+
+  drawOverlay(name, x, y, scale = 1, alpha = 1) {
+    const gl = this.gl;
+    const overlay = this.overlayTextures[name];
+    if (!overlay || !overlay.loaded) return;
+
+    gl.useProgram(this.overlayProgram);
+    gl.bindVertexArray(this.overlayVao);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    const w = gl.canvas.width;
+    const h = gl.canvas.height;
+    const proj = ortho(0, w, 0, h, -1, 1);
+
+    gl.uniformMatrix4fv(this.overlayProjLoc, false, proj);
+    gl.uniform2f(this.overlayPosUniformLoc, x, y);
+    gl.uniform2f(this.overlaySizeLoc, overlay.width * scale, overlay.height * scale);
+    gl.uniform1f(this.overlayAlphaLoc, alpha);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, overlay.texture);
+    gl.uniform1i(this.overlayTextureLoc, 0);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    gl.disable(gl.BLEND);
+    gl.bindVertexArray(null);
+  }
+
+  drawOverlayCentered(name, scale = 1, alpha = 1) {
+    const gl = this.gl;
+    const overlay = this.overlayTextures[name];
+    if (!overlay || !overlay.loaded) return;
+
+    const x = gl.canvas.width / 2;
+    const y = gl.canvas.height / 2;
+    this.drawOverlay(name, x, y, scale, alpha);
+  }
+
   // Build vertex data for vector text
   _buildTextVertices(text, x, y, scale, color) {
     const verts = [];
@@ -1349,7 +1502,7 @@ class Renderer {
     return verts;
   }
 
-  drawHUD(hudData) {
+  drawHUD(hudData, overlays = null) {
     const gl = this.gl;
     const w = gl.canvas.width;
     const h = gl.canvas.height;
@@ -1367,6 +1520,17 @@ class Renderer {
     const padding = 20;
     const glowColor = [0.2, 1.0, 0.6]; // green vector glow
     const dimColor = [0.1, 0.5, 0.3];
+
+    // Show prompts for overlays
+    if (overlays && overlays.splash && overlays.splash.visible) {
+      const promptText = 'PRESS ANY KEY TO START';
+      const promptWidth = promptText.length * 6 * scale;
+      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.25, scale, glowColor));
+    } else if (overlays && overlays.gameover && overlays.gameover.visible) {
+      const promptText = 'PRESS ANY KEY TO RESTART';
+      const promptWidth = promptText.length * 6 * scale;
+      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.25, scale, glowColor));
+    }
 
     // Score - top left
     const scoreText = `SCORE ${hudData.score.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
@@ -1512,7 +1676,36 @@ export class Game {
     this._fireCooldown = 0;
     this._screenShakeIntensity = 0;
     this.immortal = false;
+    // Overlay state
+    this.overlays = {
+      splash: { visible: true, alpha: 1 },
+      title: { visible: true, alpha: 1 },
+      gameover: { visible: false, alpha: 1 },
+      lifeOverlay: { visible: false, alpha: 1, index: 1 },
+    };
     this._log('Game created');
+  }
+
+  showOverlay(name, alpha = 1) {
+    if (this.overlays[name]) {
+      this.overlays[name].visible = true;
+      this.overlays[name].alpha = alpha;
+    }
+  }
+
+  hideOverlay(name) {
+    if (this.overlays[name]) {
+      this.overlays[name].visible = false;
+    }
+  }
+
+  showLifeOverlay() {
+    this.overlays.lifeOverlay.visible = true;
+    this.overlays.lifeOverlay.index = 1 + Math.floor(Math.random() * 3);
+  }
+
+  hideLifeOverlay() {
+    this.overlays.lifeOverlay.visible = false;
   }
 
   start() {
@@ -1813,6 +2006,7 @@ export class Game {
       this.postEnabled,
       this.postConfig,
       hudData,
+      this.overlays,
     );
   }
 
