@@ -184,6 +184,13 @@ void main() {
   // tone mapping
   col = ACESFilm(col * 1.2);
 
+  // contrast boost
+  col = (col - 0.5) * 1.3 + 0.5;
+
+  // saturation boost
+  float grey = dot(col, vec3(0.299, 0.587, 0.114));
+  col = mix(vec3(grey), col, 1.4);
+
   // film grain
   float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * 0.15;
   col += g;
@@ -543,10 +550,10 @@ class Renderer {
     }
   }
 
-  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec) {
+  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true) {
     const gl = this.gl;
-    // Always render to framebuffer then post-process
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+    // Render to framebuffer if post-processing, otherwise directly to screen
+    gl.bindFramebuffer(gl.FRAMEBUFFER, postEnabled ? this.fbo : null);
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.useProgram(this.program);
     gl.clearColor(0.12, 0.15, 0.22, 1.0);
@@ -576,6 +583,12 @@ class Renderer {
     this._drawParticles(particles);
     this._drawSquares(squares);
     this._drawShip(ship, thrusting, stateText);
+
+    // Skip post-processing if disabled
+    if (!postEnabled) {
+      gl.bindVertexArray(null);
+      return;
+    }
 
     // Pass 2: postprocess to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -996,7 +1009,10 @@ export class Game {
       this._status = this.paused ? 'paused' : 'running';
       this._log(`Paused toggled -> ${this.paused}`);
     }
-    // post toggle disabled per rollback
+    if (this.input.consumePostToggle()) {
+      this.postEnabled = !this.postEnabled;
+      this._log(`Post effects toggled -> ${this.postEnabled}`);
+    }
 
     if (!this.paused) {
       const thrusting = this._update(dt);
@@ -1238,6 +1254,7 @@ export class Game {
       [...this.particles, ...this.thrustParticles],
       this.squareBursts,
       performance.now() / 1000,
+      this.postEnabled,
     );
   }
 
