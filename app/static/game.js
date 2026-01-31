@@ -106,6 +106,11 @@ uniform float u_vignette;
 uniform float u_chromatic;
 uniform float u_scanlines;
 uniform float u_barrelDistort;
+uniform float u_phosphor;
+uniform float u_colorFringe;
+uniform float u_staticNoise;
+uniform vec2 u_screenShake;
+uniform int u_colorLut;
 out vec4 outColor;
 
 // barrel distortion
@@ -146,8 +151,104 @@ vec3 ACESFilm(vec3 x) {
   return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
+// Phosphor glow - simulate RGB subpixel pattern
+vec3 phosphorGlow(vec2 uv, vec3 col, float intensity) {
+  vec2 pixelPos = uv * u_resolution;
+  float subpixel = mod(pixelPos.x, 3.0);
+  vec3 mask = vec3(
+    smoothstep(0.0, 1.0, 1.0 - abs(subpixel - 0.5)),
+    smoothstep(0.0, 1.0, 1.0 - abs(subpixel - 1.5)),
+    smoothstep(0.0, 1.0, 1.0 - abs(subpixel - 2.5))
+  );
+  // Scanline component
+  float scanY = mod(pixelPos.y, 2.0);
+  float scanMask = 0.85 + 0.15 * smoothstep(0.0, 1.0, scanY);
+  mask *= scanMask;
+  // Blend phosphor mask with original
+  vec3 phosphorCol = col * mix(vec3(1.0), mask, intensity);
+  // Add glow bleeding
+  float glow = (col.r + col.g + col.b) / 3.0 * intensity * 0.15;
+  return phosphorCol + glow;
+}
+
+// Color fringing - NTSC-style horizontal color bleed
+vec3 colorFringing(vec2 uv, vec3 col, float intensity) {
+  vec2 texel = 1.0 / u_resolution;
+  // Sample neighbors for edge detection
+  float lumCenter = dot(col, vec3(0.299, 0.587, 0.114));
+  vec3 colLeft = texture(u_scene, uv - vec2(texel.x * 2.0, 0.0)).rgb;
+  vec3 colRight = texture(u_scene, uv + vec2(texel.x * 2.0, 0.0)).rgb;
+  float lumLeft = dot(colLeft, vec3(0.299, 0.587, 0.114));
+  float lumRight = dot(colRight, vec3(0.299, 0.587, 0.114));
+  // Detect edges
+  float edgeL = abs(lumCenter - lumLeft);
+  float edgeR = abs(lumCenter - lumRight);
+  float edge = max(edgeL, edgeR);
+  // Apply colored fringe on edges
+  vec3 fringe = vec3(
+    texture(u_scene, uv - vec2(texel.x * intensity * 2.0, 0.0)).r,
+    col.g,
+    texture(u_scene, uv + vec2(texel.x * intensity * 2.0, 0.0)).b
+  );
+  return mix(col, fringe, edge * intensity);
+}
+
+// Static noise burst
+vec3 staticNoiseBurst(vec2 uv, vec3 col, float intensity, float time) {
+  if (intensity <= 0.0) return col;
+  // Random burst timing
+  float burstTrigger = step(0.97, fract(sin(time * 1.7) * 43758.5453));
+  float burstIntensity = burstTrigger * intensity;
+  // Noise pattern
+  float noise = rand(uv * u_resolution + time * 100.0);
+  // Horizontal tear lines
+  float tearLine = step(0.98, fract(sin(uv.y * 50.0 + time * 30.0) * 43758.5453));
+  float tear = tearLine * 0.3;
+  // Combine
+  vec3 staticCol = vec3(noise);
+  col = mix(col, staticCol, burstIntensity * 0.5);
+  col += tear * burstIntensity;
+  // RGB split on burst
+  if (burstTrigger > 0.5) {
+    vec2 offset = vec2(0.01 * intensity, 0.0);
+    col.r = texture(u_scene, uv + offset).r;
+    col.b = texture(u_scene, uv - offset).b;
+  }
+  return col;
+}
+
+// Color LUT application
+vec3 applyColorLut(vec3 col, int lutIndex) {
+  if (lutIndex == 1) {
+    // Amber monochrome
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    return vec3(lum * 1.2, lum * 0.9, lum * 0.4);
+  } else if (lutIndex == 2) {
+    // Cool blue
+    return vec3(col.r * 0.7, col.g * 0.85, col.b * 1.3);
+  } else if (lutIndex == 3) {
+    // Neon/cyberpunk
+    col = pow(col, vec3(0.9));
+    col.r = col.r * 1.1 + col.b * 0.2;
+    col.g = col.g * 1.2;
+    col.b = col.b * 1.3 + col.r * 0.1;
+    return clamp(col, 0.0, 1.0);
+  } else if (lutIndex == 4) {
+    // Noir
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    vec3 bw = vec3(lum);
+    bw = (bw - 0.5) * 1.4 + 0.5; // boost contrast
+    return clamp(bw, 0.0, 1.0);
+  }
+  return col;
+}
+
 void main() {
   vec2 uv = v_uv;
+
+  // Apply screen shake
+  uv += u_screenShake;
+
   // line wobble and occasional VHS-style horizontal jitter
   float lineWobble = sin(u_time * 1.3 + uv.y * 160.0) * 0.001 *  sin(u_time * 2.0);
   float jitterEvent = step(0.995, fract(sin(u_time * 3.17) * 43758.5453));
@@ -169,6 +270,9 @@ void main() {
   vec3 prevCol = texture(u_prev, uvCurved).rgb;
   col = mix(prevCol, col, u_motionMix);
 
+  // color fringing (NTSC artifact)
+  col = colorFringing(uvCurved, col, u_colorFringe);
+
   // color bleed (luma-weighted horizontal smear)
   float luma = dot(col, vec3(0.299, 0.587, 0.114));
   float bleed = 0.04 * smoothstep(0.3, 1.0, luma);
@@ -179,12 +283,18 @@ void main() {
   );
   col = mix(col, bleedCol, 0.5);
 
+  // phosphor glow
+  col = phosphorGlow(uvCurved, col, u_phosphor);
+
   // scanlines
   col *= 1.0 - scan * u_scanlines;
 
   // vignette
   float vig = vignette(uvCurved);
   col *= mix(1.0, vig, u_vignette) + 0.04;
+
+  // static noise burst
+  col = staticNoiseBurst(uvCurved, col, u_staticNoise, u_time);
 
   // tone mapping
   col = ACESFilm(col * u_exposure);
@@ -195,6 +305,9 @@ void main() {
   // saturation
   float grey = dot(col, vec3(0.299, 0.587, 0.114));
   col = mix(vec3(grey), col, u_saturation);
+
+  // color LUT
+  col = applyColorLut(col, u_colorLut);
 
   // film grain
   float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * u_filmGrain;
@@ -308,13 +421,18 @@ const POST_CONFIG = {
   trailDecay: 0.8,
   trailGain: 0.1,
   exposure: 1.2,
-  contrast: 1.3,
-  saturation: 1.4,
-  filmGrain: 0.15,
-  vignette: 0.25,
+  contrast: 1.6,
+  saturation: 2.0,
+  filmGrain: 0.50,
+  vignette: 0.85,
   chromatic: 0.11,
   scanlines: 0.12,
   barrelDistort: 0.03,
+  phosphor: 0.15,
+  colorFringe: 0.4,
+  staticNoise: 0.0,
+  screenShake: 1.0,
+  colorLut: 0, // 0=none, 1=amber, 2=cool, 3=neon, 4=noir
 };
 
 class DebugUI {
@@ -323,6 +441,11 @@ class DebugUI {
     this.visible = false;
     this.panel = null;
     this._create();
+  }
+
+  _stopKeyPropagation(el) {
+    el.addEventListener('keydown', (e) => e.stopPropagation());
+    el.addEventListener('keyup', (e) => e.stopPropagation());
   }
 
   _create() {
@@ -340,7 +463,9 @@ class DebugUI {
       border-radius: 8px;
       z-index: 1000;
       display: none;
-      min-width: 280px;
+      min-width: 300px;
+      max-height: 90vh;
+      overflow-y: auto;
     `;
 
     const title = document.createElement('div');
@@ -360,6 +485,10 @@ class DebugUI {
       { key: 'chromatic', label: 'Chromatic Ab.', min: 0, max: 0.3, step: 0.01 },
       { key: 'scanlines', label: 'Scanlines', min: 0, max: 0.3, step: 0.01 },
       { key: 'barrelDistort', label: 'Barrel Distort', min: 0, max: 0.1, step: 0.005 },
+      { key: 'phosphor', label: 'Phosphor Glow', min: 0, max: 1, step: 0.05 },
+      { key: 'colorFringe', label: 'Color Fringe', min: 0, max: 1, step: 0.05 },
+      { key: 'staticNoise', label: 'Static Noise', min: 0, max: 1, step: 0.05 },
+      { key: 'screenShake', label: 'Screen Shake', min: 0, max: 2, step: 0.1 },
     ];
 
     params.forEach((p) => {
@@ -368,7 +497,7 @@ class DebugUI {
 
       const label = document.createElement('span');
       label.textContent = p.label;
-      label.style.cssText = 'width: 100px; display: inline-block;';
+      label.style.cssText = 'width: 110px; display: inline-block;';
 
       const slider = document.createElement('input');
       slider.type = 'range';
@@ -377,6 +506,7 @@ class DebugUI {
       slider.step = p.step;
       slider.value = this.config[p.key];
       slider.style.cssText = 'width: 100px; margin: 0 10px;';
+      this._stopKeyPropagation(slider);
 
       const value = document.createElement('span');
       value.textContent = this.config[p.key].toFixed(2);
@@ -392,6 +522,42 @@ class DebugUI {
       row.appendChild(value);
       this.panel.appendChild(row);
     });
+
+    // Color LUT selector
+    const lutRow = document.createElement('div');
+    lutRow.style.cssText = 'margin-top: 15px; margin-bottom: 8px; display: flex; align-items: center;';
+
+    const lutLabel = document.createElement('span');
+    lutLabel.textContent = 'Color LUT';
+    lutLabel.style.cssText = 'width: 110px; display: inline-block;';
+
+    const lutSelect = document.createElement('select');
+    lutSelect.style.cssText = 'width: 120px; background: #222; color: #0f0; border: 1px solid #0f0; padding: 4px;';
+    this._stopKeyPropagation(lutSelect);
+
+    const luts = [
+      { value: 0, label: 'None' },
+      { value: 1, label: 'Amber' },
+      { value: 2, label: 'Cool Blue' },
+      { value: 3, label: 'Neon' },
+      { value: 4, label: 'Noir' },
+    ];
+
+    luts.forEach((lut) => {
+      const opt = document.createElement('option');
+      opt.value = lut.value;
+      opt.textContent = lut.label;
+      if (this.config.colorLut === lut.value) opt.selected = true;
+      lutSelect.appendChild(opt);
+    });
+
+    lutSelect.addEventListener('change', () => {
+      this.config.colorLut = parseInt(lutSelect.value);
+    });
+
+    lutRow.appendChild(lutLabel);
+    lutRow.appendChild(lutSelect);
+    this.panel.appendChild(lutRow);
 
     document.body.appendChild(this.panel);
   }
@@ -412,6 +578,7 @@ class InputController {
     this.reset = false;
     this.togglePost = false;
     this.toggleDebug = false;
+    this.toggleImmortality = false;
     this._bindKeyboard();
     this._bindTouch(canvas);
   }
@@ -440,6 +607,12 @@ class InputController {
     return d;
   }
 
+  consumeImmortalityToggle() {
+    const i = this.toggleImmortality;
+    this.toggleImmortality = false;
+    return i;
+  }
+
   _bindKeyboard() {
     const onKey = (down, code) => {
       switch (code) {
@@ -465,6 +638,8 @@ class InputController {
           if (down) this.togglePost = true; break;
         case 'Digit2':
           if (down) this.toggleDebug = true; break;
+        case 'Digit3':
+          if (down) this.toggleImmortality = true; break;
         default:
           break;
       }
@@ -624,6 +799,11 @@ class Renderer {
     this.postChromaticLoc = gl.getUniformLocation(this.postProgram, 'u_chromatic');
     this.postScanlinesLoc = gl.getUniformLocation(this.postProgram, 'u_scanlines');
     this.postBarrelDistortLoc = gl.getUniformLocation(this.postProgram, 'u_barrelDistort');
+    this.postPhosphorLoc = gl.getUniformLocation(this.postProgram, 'u_phosphor');
+    this.postColorFringeLoc = gl.getUniformLocation(this.postProgram, 'u_colorFringe');
+    this.postStaticNoiseLoc = gl.getUniformLocation(this.postProgram, 'u_staticNoise');
+    this.postScreenShakeLoc = gl.getUniformLocation(this.postProgram, 'u_screenShake');
+    this.postColorLutLoc = gl.getUniformLocation(this.postProgram, 'u_colorLut');
 
     // Accumulation program for motion trails
     this.accumProgram = createProgram(gl, POST_VERTEX_SRC, ACCUM_FRAGMENT_SRC);
@@ -733,6 +913,11 @@ class Renderer {
     gl.uniform1f(this.postChromaticLoc, config.chromatic);
     gl.uniform1f(this.postScanlinesLoc, config.scanlines);
     gl.uniform1f(this.postBarrelDistortLoc, config.barrelDistort);
+    gl.uniform1f(this.postPhosphorLoc, config.phosphor);
+    gl.uniform1f(this.postColorFringeLoc, config.colorFringe);
+    gl.uniform1f(this.postStaticNoiseLoc, config.staticNoise);
+    gl.uniform2f(this.postScreenShakeLoc, config.screenShakeX || 0, config.screenShakeY || 0);
+    gl.uniform1i(this.postColorLutLoc, config.colorLut);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindVertexArray(null);
@@ -1119,6 +1304,8 @@ export class Game {
     this.cameraZoom = CAMERA_ZOOM_RECOVER;
     this._cameraZoomTarget = CAMERA_ZOOM_RECOVER;
     this._fireCooldown = 0;
+    this._screenShakeIntensity = 0;
+    this.immortal = false;
     this._log('Game created');
   }
 
@@ -1146,6 +1333,10 @@ export class Game {
     }
     if (this.input.consumeDebugToggle()) {
       this.debugUI.toggle();
+    }
+    if (this.input.consumeImmortalityToggle()) {
+      this.immortal = !this.immortal;
+      this._log(`Immortality toggled -> ${this.immortal}`);
     }
 
     if (!this.paused) {
@@ -1183,6 +1374,19 @@ export class Game {
     const targetZoom = Math.min(this._cameraZoomTarget, speedZoom);
     const zoomLerp = Math.min(1, dt * 3);
     this.cameraZoom += (targetZoom - this.cameraZoom) * zoomLerp;
+
+    // Screen shake decay and apply to postConfig
+    if (this._screenShakeIntensity > 0) {
+      this._screenShakeIntensity *= Math.pow(0.1, dt); // decay
+      if (this._screenShakeIntensity < 0.001) this._screenShakeIntensity = 0;
+      const shake = this._screenShakeIntensity * this.postConfig.screenShake;
+      const time = performance.now() / 1000;
+      this.postConfig.screenShakeX = Math.sin(time * 50) * shake * 0.03;
+      this.postConfig.screenShakeY = Math.cos(time * 43) * shake * 0.02;
+    } else {
+      this.postConfig.screenShakeX = 0;
+      this.postConfig.screenShakeY = 0;
+    }
 
     if (this.ship.state === 'crashed') {
       this._explosionTimer -= dt;
@@ -1247,6 +1451,7 @@ export class Game {
   }
 
   _checkBounds() {
+    if (this.immortal) return;
     const dx = this.ship.pos.x - WORLD_CENTER.x;
     const dy = this.ship.pos.y - WORLD_CENTER.y;
     const dist = Math.hypot(dx, dy);
@@ -1257,7 +1462,7 @@ export class Game {
 
   _checkCollision() {
     const ship = this.ship;
-    if (ship.state !== 'playing') return;
+    if (ship.state !== 'playing' || this.immortal) return;
 
     // Landing pads first
     for (const pad of this.level.pads) {
@@ -1293,7 +1498,7 @@ export class Game {
   }
 
   _checkEnemyCollision() {
-    if (this.ship.state !== 'playing' || this.ship.invuln > 0) return;
+    if (this.ship.state !== 'playing' || this.ship.invuln > 0 || this.immortal) return;
     for (const e of this.enemies) {
       const dist = Math.hypot(e.pos.x - this.ship.pos.x, e.pos.y - this.ship.pos.y);
       if (dist < e.radius + SHIP_RADIUS * COLLISION_MARGIN) {
@@ -1320,6 +1525,8 @@ export class Game {
         const split = this._splitEnemy(e);
         this._spawnEnemyExplosion(e);
         const baseScore = SCORE_VALUES[e.size] || 0;
+        // Screen shake based on enemy size
+        this._screenShakeIntensity = Math.max(this._screenShakeIntensity, e.size * 0.1);
         if (split.length) {
           remainingEnemies.push(...split);
           // award score for the enemy destroyed into fragments with a small random bonus
@@ -1358,6 +1565,7 @@ export class Game {
     this._spawnExplosion();
     this._cameraZoomTarget = CAMERA_ZOOM_CRASH;
     this._explosionTimer = EXPLOSION_DURATION;
+    this._screenShakeIntensity = 1.0; // trigger screen shake
     this.onDie();
     if (this.ship.lives <= 0) {
       this._gameOverDelay = 4.0;
