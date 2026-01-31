@@ -16,13 +16,21 @@
   <audio id="laser-audio" src="/static/audio/laser.mp3" preload="auto"></audio>
   <audio id="pop-audio" src="/static/audio/pop.mp3" preload="auto"></audio>
   <audio id="thrust-audio" src="/static/audio/thrust.wav" preload="auto"></audio>
+  <audio id="gameover-audio" src="/static/audio/gameover.mp3" preload="auto"></audio>
   <div id="splash">
     <img src="/static/blastoff.png" alt="Blastoff splash">
     <div class="splash-hint">Press any key to start</div>
   </div>
   <img id="title-overlay" src="/static/title.png" alt="Gravity title">
+  <div id="gameover">
+    <img src="/static/gameover.png" alt="Game Over">
+    <div class="splash-hint">Press any key to restart</div>
+  </div>
   <div class="hud hud-inline" aria-hidden="true"></div>
-  <div class="score score-topleft">Score: <span id="score">0</span></div>
+  <div class="score score-topleft">
+    <div>Score: <span id="score">0</span></div>
+    <div class="lives">Lives: <span id="lives">3</span></div>
+  </div>
   <script type="module" src="/static/main.js"></script>
 </body>
 </html>

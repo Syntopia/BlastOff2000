@@ -3,19 +3,24 @@ import { Game, getWorldSize } from './game.js';
 const canvas = document.getElementById('playfield');
 let statusEl = document.getElementById('status-text');
 const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
 const bgmEl = document.getElementById('bgm');
 const explosionAudio = document.getElementById('explosion-audio');
 const laserAudio = document.getElementById('laser-audio');
 const popAudio = document.getElementById('pop-audio');
 const thrustAudio = document.getElementById('thrust-audio');
-bgmEl.volume = 1.0;
-explosionAudio.volume = 0.85;
-laserAudio.volume = 0.65;
-popAudio.volume = 0.9;
-thrustAudio.volume = 0.5;
+const gameoverAudio = document.getElementById('gameover-audio');
 const splashEl = document.getElementById('splash');
+const gameoverEl = document.getElementById('gameover');
+bgmEl.volume = 1.0;
+explosionAudio.volume = 0.75;
+laserAudio.volume = 0.65;
+popAudio.volume = 0.6;
+thrustAudio.volume = 0.5;
 let audioStarted = false;
 let bgmFading = false;
+let gameOverArmed = false;
+let waitingForRestart = false;
 const tracks = [
   '/static/audio/Zero-G Boss Rush.mp3',
   '/static/audio/Zero-G Boss Rush (1).mp3',
@@ -74,6 +79,7 @@ const hud = {
       scoreEl.classList.add('score-pulse');
     }
   },
+  lives: (v) => { livesEl.textContent = v; },
 };
 
 if (!statusEl) {
@@ -83,29 +89,51 @@ statusEl.textContent = 'Preparing level…';
 
 try {
   pickTrack();
-  const game = new Game(gl, hud, () => {
-    if (!audioStarted) {
-      pickTrack();
-      bgmEl.currentTime = 0;
-      bgmEl.play().catch(() => {});
-      audioStarted = true;
-    }
-  }, () => {
-    fadeOutBgm(1200);
-    explosionAudio.currentTime = 0;
-    explosionAudio.play().catch(() => {});
-  }, () => {
-    playSound(laserAudio, 0.9);
-  }, () => {
-    // use explosion sample sped up for a sharp pop
-    playSound(explosionAudio, 0.3, 1.6);
-  }, () => {
-    playSound(thrustAudio, 0.5, 0.5); // one octave deeper on first thrust tick
-  });
+  let inputLocked = true;
+  gameOverArmed = false;
+  waitingForRestart = false;
+  const game = new Game(
+    gl,
+    hud,
+    () => {
+      if (!audioStarted) {
+        pickTrack();
+        bgmEl.currentTime = 0;
+        bgmEl.play().catch(() => {});
+        audioStarted = true;
+      }
+    },
+    () => {
+      fadeOutBgm(1200);
+      explosionAudio.currentTime = 0;
+      explosionAudio.play().catch(() => {});
+    },
+    () => {
+      playSound(laserAudio, 0.5);
+    },
+    () => {
+      // use explosion sample sped up for a sharp pop
+      playSound(explosionAudio, 0.3, 1.6);
+    },
+    () => {
+      playSound(thrustAudio, 0.5, 0.5); // one octave deeper on first thrust tick
+    },
+    () => {
+      game.inputLocked = true;
+      gameoverEl.style.display = 'flex';
+      waitingForRestart = true;
+      gameoverAudio.currentTime = 0;
+      gameoverAudio.play().catch(() => {});
+      setTimeout(() => { gameOverArmed = true; }, 5000);
+    },
+  );
   statusEl.textContent = 'Running';
+  game.inputLocked = true;
   game.start();
   const hideSplash = () => {
     splashEl.style.display = 'none';
+    inputLocked = false;
+    game.inputLocked = false;
     window.removeEventListener('keydown', hideSplash);
     window.removeEventListener('mousedown', hideSplash);
     window.removeEventListener('touchstart', hideSplash);
@@ -113,6 +141,15 @@ try {
   window.addEventListener('keydown', hideSplash);
   window.addEventListener('mousedown', hideSplash);
   window.addEventListener('touchstart', hideSplash, { passive: true });
+
+  const restartHandler = () => {
+    if (waitingForRestart && gameOverArmed) {
+      window.location.reload();
+    }
+  };
+  window.addEventListener('keydown', restartHandler);
+  window.addEventListener('mousedown', restartHandler);
+  window.addEventListener('touchstart', restartHandler, { passive: true });
 } catch (err) {
   statusEl.textContent = 'Failed to start';
   console.error(err);

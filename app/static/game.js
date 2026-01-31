@@ -53,17 +53,7 @@ void main() {
   float ripple = 0.05 * sin(0.6 * (p.x + p.y) + u_time * 1.8);
   float swirl = 0.03 * sin(0.7 * p.x - 0.5 * p.y + u_time * 0.7);
   vec3 color = v_color;
-  if (u_material > 0.5) {
-    vec2 rp = v_pos * 0.6;
-    float coarse = fbm(rp * 0.7 + u_time * 0.1);
-    float fine = fbm(rp * 3.5 + u_time * 0.2);
-    float crevice = smoothstep(0.45, 0.65, coarse) * 0.45;
-    float highlight = smoothstep(0.6, 0.8, fine) * 0.25;
-    color = mix(color * 0.9, color + vec3(0.08, 0.1, 0.12), highlight);
-    color -= crevice * vec3(0.15, 0.18, 0.2);
-  } else if (u_material < 0.5) {
-    color += vec3(wave + ripple + swirl) * 0.35;
-  } else {
+  if (u_material > 1.5) {
     // monster material (u_material == 2): phong-like shading
     vec2 d = (v_pos - u_monsterCenter) / u_monsterRadius;
     float r2 = clamp(dot(d, d), 0.0, 1.0);
@@ -75,6 +65,18 @@ void main() {
     vec3 halfDir = normalize(lightDir + viewDir);
     float spec = pow(max(0.0, dot(normal, halfDir)), 12.0);
     color = v_color * (0.35 + 0.65 * diff) + vec3(1.0, 0.9, 0.8) * spec * 0.7;
+  } else if (u_material > 0.5) {
+    // rock shader
+    vec2 rp = v_pos * 0.6;
+    float coarse = fbm(rp * 0.7 + u_time * 0.1);
+    float fine = fbm(rp * 3.5 + u_time * 0.2);
+    float crevice = smoothstep(0.45, 0.65, coarse) * 0.45;
+    float highlight = smoothstep(0.6, 0.8, fine) * 0.25;
+    color = mix(color * 0.9, color + vec3(0.08, 0.1, 0.12), highlight);
+    color -= crevice * vec3(0.15, 0.18, 0.2);
+  } else {
+    // interior water-like flow
+    color += vec3(wave + ripple + swirl) * 0.35;
   }
   outColor = vec4(color, 1.0);
 }`;
@@ -136,7 +138,7 @@ void main() {
   // tiny chromatic aberration toward edges
   vec2 center = uvCurved - 0.5;
   float dist = length(center);
-  vec2 ca = center * dist * 0.14;
+  vec2 ca = center * dist * 0.06;
 
   vec3 col;
   col.r = texture(u_scene, uvCurved + ca).r;
@@ -144,7 +146,7 @@ void main() {
   col.b = texture(u_scene, uvCurved - ca).b;
 
   // bloom
-  col = mix(col, bloom(uvCurved), 0.82);
+  col = mix(col, bloom(uvCurved), 0.88);
 
   // color bleed (luma-weighted horizontal smear)
   float luma = dot(col, vec3(0.299, 0.587, 0.114));
@@ -159,11 +161,12 @@ void main() {
   // scanlines
   col *= 1.0 - scan * 0.12;
 
-  // vignette
-  col *= vignette(uvCurved) * 0.98 + 0.12;
+  // vignette softened
+  float vig = vignette(uvCurved);
+  col *= mix(1.0, vig, 0.25) + 0.04;
 
   // film grain
-  float g = (rand(uvCurved * u_resolution.xy + u_time * 12.3) - 0.5) * 0.1;
+  float g = (rand(uvCurved * u_resolution.xy - u_time * 2.3) - 0.5) * 0.25;
   col += g;
 
   outColor = vec4(col, 1.0);
@@ -511,7 +514,7 @@ class Renderer {
     this._drawTerrain(level.terrain);
     this._drawPads(level.pads);
     gl.uniform1f(this.materialLoc, 1.0);
-    this._drawRocks(level.rocks);
+    this._drawRocks(level.rocks, timeSec);
     gl.uniform1f(this.materialLoc, 2.0);
     this._drawEnemies(enemies);
     gl.uniform1f(this.materialLoc, 0.0);
@@ -586,7 +589,7 @@ class Renderer {
     });
   }
 
-  _drawRocks(rocks) {
+  _drawRocks(rocks, timeSec) {
     const gl = this.gl;
     const segments = 18;
     rocks.forEach((r) => {
@@ -594,8 +597,10 @@ class Renderer {
       verts.push(r.x, r.y, 0.6, 0.72, 0.82);
       for (let i = 0; i <= segments; i += 1) {
         const a = (i / segments) * Math.PI * 2;
-        const x = r.x + Math.cos(a) * r.r;
-        const y = r.y + Math.sin(a) * r.r;
+        const range = r.r * 0.08;
+        const pulsate = Math.sin(timeSec * 2.0 + r.x + r.y) * range;
+        const x = r.x + Math.cos(a) * (r.r + pulsate);
+        const y = r.y + Math.sin(a) * (r.r + pulsate);
         verts.push(x, y, 0.5, 0.64, 0.74);
       }
       const data = new Float32Array(verts);
@@ -672,6 +677,20 @@ class Renderer {
     ]);
     gl.bufferData(gl.ARRAY_BUFFER, markerVerts, gl.STREAM_DRAW);
     gl.drawArrays(gl.LINES, 0, 4);
+
+    if (ship.invuln > 0) {
+      const segments = 32;
+      const ringVerts = [];
+      const radius = SHIP_RADIUS + 0.6;
+      for (let i = 0; i <= segments; i += 1) {
+        const a = (i / segments) * Math.PI * 2;
+        const x = ship.pos.x + Math.cos(a) * radius;
+        const y = ship.pos.y + Math.sin(a) * radius;
+        ringVerts.push(x, y, 0.4, 0.9, 1.0);
+      }
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ringVerts), gl.STREAM_DRAW);
+      gl.drawArrays(gl.LINE_STRIP, 0, segments + 1);
+    }
   }
 
   _drawEnemies(enemies) {
@@ -790,7 +809,7 @@ function multiplyMat4(a, b) {
 }
 
 export class Game {
-  constructor(gl, hudCallbacks, onThrustStart = () => {}, onDie = () => {}, onFire = () => {}, onEnemyPop = () => {}, onThrust = () => {}) {
+  constructor(gl, hudCallbacks, onThrustStart = () => {}, onDie = () => {}, onFire = () => {}, onEnemyPop = () => {}, onThrust = () => {}, onGameOver = () => {}) {
     this.gl = gl;
     this.renderer = new Renderer(gl);
     this.level = new Level();
@@ -811,8 +830,10 @@ export class Game {
     this.onFire = onFire;
     this.onEnemyPop = onEnemyPop;
     this.onThrust = onThrust;
+    this.onGameOver = onGameOver;
     this._wasThrusting = false;
     this.postEnabled = true;
+    this.inputLocked = false;
     this._status = 'initializing';
     this._explosionTimer = 0;
     this.cameraZoom = CAMERA_ZOOM_RECOVER;
@@ -852,6 +873,11 @@ export class Game {
   }
 
   _update(dt) {
+    if (this.inputLocked) {
+      this._updateHud(false);
+      return false;
+    }
+
     const thrusting = this.ship.applyInput(dt, this.input);
     if (this.ship.state === 'ready') this.ship.state = 'playing';
 
@@ -876,8 +902,10 @@ export class Game {
       this._explosionTimer -= dt;
       this._updateParticles(dt);
       if (this._explosionTimer <= 0) {
-        this._resetShip(true);
-        this._cameraZoomTarget = CAMERA_ZOOM_RECOVER;
+        if (this.ship.lives > 0) {
+          this._resetShip(true);
+          this._cameraZoomTarget = CAMERA_ZOOM_RECOVER;
+        }
       }
       this._updateHud(false);
       return thrusting;
@@ -996,13 +1024,14 @@ export class Game {
       } else {
         const split = this._splitEnemy(e);
         this._spawnEnemyExplosion(e);
+        const baseScore = SCORE_VALUES[e.size] || 0;
         if (split.length) {
           remainingEnemies.push(...split);
           // award score for the enemy destroyed into fragments with a small random bonus
-          this._addScore(e.size + this._scoreJitter());
+          this._addScore(baseScore + this._scoreJitter());
         } else {
           this._scheduleEnemyRespawn();
-          this._addScore(e.size + this._scoreJitter());
+          this._addScore(baseScore + this._scoreJitter());
         }
         this.onEnemyPop();
       }
@@ -1035,14 +1064,14 @@ export class Game {
     this._cameraZoomTarget = CAMERA_ZOOM_CRASH;
     this._explosionTimer = EXPLOSION_DURATION;
     this.onDie();
+    if (this.ship.lives <= 0) {
+      this.onGameOver();
+      return;
+    }
   }
 
   _resetShip(hard) {
-    if (this.ship.lives <= 0) {
-      this.ship.lives = 3;
-      this.ship.fuel = 100;
-      this._log('Lives refilled');
-    }
+    if (this.ship.lives <= 0) return;
     this.ship.reset(hard);
     this._status = 'running';
   }
@@ -1076,6 +1105,7 @@ export class Game {
     const label = this.paused ? 'paused' : `${this.ship.state}${this._status ? ' - ' + this._status : ''}`;
     this.hud.state(label, thrusting);
     this.hud.particles(this.particles.length + this.thrustParticles.length);
+    this.hud.lives(this.ship.lives);
   }
 
   _log(msg) {

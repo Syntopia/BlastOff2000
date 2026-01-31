@@ -30,5 +30,7 @@ Open http://127.0.0.1:8000/
 - `audio/pop.mp3`: Pop/explosion (source: SoundBible “Blop” / free SFX with attribution).
 - `audio/thrust.wav`: Synthesized in-project (public domain for this project).
 - Theme tracks (`Zero-G Boss Rush*.mp3`, `Gravity Clash 1987*.mp3`): Suno AI–generated for this project (user-provided / project-only use).
+- `audio/gameover.mp3`: User-provided game over sting (project use).
+- Images: `blastoff.png`, `title.png`, `gameover.png` supplied by user for this project.
 
 All other code and shaders are part of this project (MIT-style unless otherwise specified by repository owner).

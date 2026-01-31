@@ -68,6 +68,13 @@ html, body {
   100% { transform: scale(1.0); }
 }
 
+.lives {
+  font-size: 22px;
+  color: #e2e8f0;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  margin-top: 4px;
+}
+
 #splash {
   position: fixed;
   inset: 0;
@@ -103,4 +110,22 @@ html, body {
   pointer-events: none;
   z-index: 4;
   filter: drop-shadow(0 3px 8px rgba(0,0,0,0.35));
+}
+
+#gameover {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 6;
+}
+
+#gameover img {
+  max-width: 80vw;
+  max-height: 80vh;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 18px rgba(0,0,0,0.55));
 }
