@@ -2,8 +2,6 @@ import { Game, getWorldSize } from './game.js';
 
 const canvas = document.getElementById('playfield');
 let statusEl = document.getElementById('status-text');
-const scoreEl = document.getElementById('score');
-const livesEl = document.getElementById('lives');
 const bgmEl = document.getElementById('bgm');
 const explosionAudio = document.getElementById('explosion-audio');
 const laserAudio = document.getElementById('laser-audio');
@@ -97,19 +95,12 @@ if (!gl) {
   throw new Error('WebGL2 not supported. This build does not fallback by design.');
 }
 
+// HUD now rendered via WebGL - these callbacks are no-ops
 const hud = {
   state: () => {},
   particles: () => {},
-  score: (v, pulsing = false) => {
-    const formatted = v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    scoreEl.textContent = formatted;
-    if (pulsing) {
-      scoreEl.classList.remove('score-pulse');
-      void scoreEl.offsetWidth; // reflow to restart animation
-      scoreEl.classList.add('score-pulse');
-    }
-  },
-  lives: (v) => { livesEl.textContent = v; },
+  score: () => {},
+  lives: () => {},
 };
 
 if (!statusEl) {

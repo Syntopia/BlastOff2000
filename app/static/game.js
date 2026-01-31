@@ -1,5 +1,78 @@
 import { createProgram, createBuffer, ortho, resizeCanvasToDisplaySize } from './gl.js';
 
+// Vector font - each character is an array of line segments [x1,y1,x2,y2,...]
+// Characters are defined in a 5x7 grid (0-4 width, 0-6 height)
+const VECTOR_FONT = {
+  '0': [1,0,3,0, 3,0,4,1, 4,1,4,5, 4,5,3,6, 3,6,1,6, 1,6,0,5, 0,5,0,1, 0,1,1,0, 0,5,4,1],
+  '1': [1,1,2,0, 2,0,2,6, 1,6,3,6],
+  '2': [0,1,1,0, 1,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,0,6, 0,6,4,6],
+  '3': [0,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3, 3,3,1,3, 3,3,4,4, 4,4,4,5, 4,5,3,6, 3,6,0,6],
+  '4': [0,0,0,3, 0,3,4,3, 3,0,3,6],
+  '5': [4,0,0,0, 0,0,0,3, 0,3,3,3, 3,3,4,4, 4,4,4,5, 4,5,3,6, 3,6,0,6],
+  '6': [3,0,1,0, 1,0,0,1, 0,1,0,5, 0,5,1,6, 1,6,3,6, 3,6,4,5, 4,5,4,4, 4,4,3,3, 3,3,0,3],
+  '7': [0,0,4,0, 4,0,2,6],
+  '8': [1,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3, 3,3,1,3, 1,3,0,2, 0,2,0,1, 0,1,1,0, 1,3,0,4, 0,4,0,5, 0,5,1,6, 1,6,3,6, 3,6,4,5, 4,5,4,4, 4,4,3,3],
+  '9': [4,3,4,1, 4,1,3,0, 3,0,1,0, 1,0,0,1, 0,1,0,2, 0,2,1,3, 1,3,4,3, 4,3,4,5, 4,5,3,6, 3,6,1,6],
+  'A': [0,6,0,2, 0,2,2,0, 2,0,4,2, 4,2,4,6, 0,4,4,4],
+  'B': [0,0,0,6, 0,6,3,6, 3,6,4,5, 4,5,4,4, 4,4,3,3, 3,3,0,3, 0,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3],
+  'C': [4,1,3,0, 3,0,1,0, 1,0,0,1, 0,1,0,5, 0,5,1,6, 1,6,3,6, 3,6,4,5],
+  'D': [0,0,0,6, 0,6,3,6, 3,6,4,5, 4,5,4,1, 4,1,3,0, 3,0,0,0],
+  'E': [4,0,0,0, 0,0,0,6, 0,6,4,6, 0,3,3,3],
+  'F': [4,0,0,0, 0,0,0,6, 0,3,3,3],
+  'G': [4,1,3,0, 3,0,1,0, 1,0,0,1, 0,1,0,5, 0,5,1,6, 1,6,3,6, 3,6,4,5, 4,5,4,3, 4,3,2,3],
+  'H': [0,0,0,6, 4,0,4,6, 0,3,4,3],
+  'I': [1,0,3,0, 2,0,2,6, 1,6,3,6],
+  'J': [4,0,4,5, 4,5,3,6, 3,6,1,6, 1,6,0,5],
+  'K': [0,0,0,6, 4,0,0,3, 0,3,4,6],
+  'L': [0,0,0,6, 0,6,4,6],
+  'M': [0,6,0,0, 0,0,2,3, 2,3,4,0, 4,0,4,6],
+  'N': [0,6,0,0, 0,0,4,6, 4,6,4,0],
+  'O': [1,0,3,0, 3,0,4,1, 4,1,4,5, 4,5,3,6, 3,6,1,6, 1,6,0,5, 0,5,0,1, 0,1,1,0],
+  'P': [0,6,0,0, 0,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3, 3,3,0,3],
+  'Q': [1,0,3,0, 3,0,4,1, 4,1,4,5, 4,5,3,6, 3,6,1,6, 1,6,0,5, 0,5,0,1, 0,1,1,0, 2,4,4,6],
+  'R': [0,6,0,0, 0,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3, 3,3,0,3, 2,3,4,6],
+  'S': [4,1,3,0, 3,0,1,0, 1,0,0,1, 0,1,0,2, 0,2,1,3, 1,3,3,3, 3,3,4,4, 4,4,4,5, 4,5,3,6, 3,6,1,6, 1,6,0,5],
+  'T': [0,0,4,0, 2,0,2,6],
+  'U': [0,0,0,5, 0,5,1,6, 1,6,3,6, 3,6,4,5, 4,5,4,0],
+  'V': [0,0,2,6, 2,6,4,0],
+  'W': [0,0,1,6, 1,6,2,3, 2,3,3,6, 3,6,4,0],
+  'X': [0,0,4,6, 4,0,0,6],
+  'Y': [0,0,2,3, 2,3,4,0, 2,3,2,6],
+  'Z': [0,0,4,0, 4,0,0,6, 0,6,4,6],
+  ' ': [],
+  '.': [2,5,2,6, 2,6,2,5],
+  ':': [2,1,2,2, 2,4,2,5],
+  '-': [1,3,3,3],
+  '/': [0,6,4,0],
+  '!': [2,0,2,4, 2,5.5,2,6],
+  '?': [0,1,1,0, 1,0,3,0, 3,0,4,1, 4,1,4,2, 4,2,3,3, 3,3,2,3, 2,3,2,4, 2,5.5,2,6],
+  '+': [2,1,2,5, 0,3,4,3],
+  '*': [2,1,2,5, 0,2,4,4, 0,4,4,2],
+  '(': [3,0,1,1, 1,1,1,5, 1,5,3,6],
+  ')': [1,0,3,1, 3,1,3,5, 3,5,1,6],
+  ',': [2,5,2,6, 2,6,1,7],
+  "'": [2,0,2,2],
+};
+
+const HUD_VERTEX_SRC = `#version 300 es
+precision highp float;
+in vec2 a_position;
+in vec3 a_color;
+uniform mat4 u_proj;
+out vec3 v_color;
+void main() {
+  v_color = a_color;
+  gl_Position = u_proj * vec4(a_position, 0.0, 1.0);
+}`;
+
+const HUD_FRAGMENT_SRC = `#version 300 es
+precision highp float;
+in vec3 v_color;
+out vec4 outColor;
+void main() {
+  outColor = vec4(v_color, 1.0);
+}`;
+
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 in vec2 a_position;
@@ -828,6 +901,21 @@ class Renderer {
     gl.bindVertexArray(null);
     this.accumVao = this.postVao;
 
+    // HUD rendering setup
+    this.hudProgram = createProgram(gl, HUD_VERTEX_SRC, HUD_FRAGMENT_SRC);
+    this.hudPosLoc = gl.getAttribLocation(this.hudProgram, 'a_position');
+    this.hudColorLoc = gl.getAttribLocation(this.hudProgram, 'a_color');
+    this.hudProjLoc = gl.getUniformLocation(this.hudProgram, 'u_proj');
+    this.hudVao = gl.createVertexArray();
+    this.hudBuffer = createBuffer(gl, new Float32Array(2000)); // pre-allocate
+    gl.bindVertexArray(this.hudVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.hudBuffer);
+    gl.enableVertexAttribArray(this.hudPosLoc);
+    gl.enableVertexAttribArray(this.hudColorLoc);
+    gl.vertexAttribPointer(this.hudPosLoc, 2, gl.FLOAT, false, 20, 0);
+    gl.vertexAttribPointer(this.hudColorLoc, 3, gl.FLOAT, false, 20, 8);
+    gl.bindVertexArray(null);
+
     this._createRenderTarget();
   }
 
@@ -851,7 +939,7 @@ class Renderer {
     }
   }
 
-  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true, config = POST_CONFIG) {
+  draw(level, ship, thrusting, stateText, enemies, bullets, particles, squares, timeSec, postEnabled = true, config = POST_CONFIG, hudData = null) {
     const gl = this.gl;
     // Render to framebuffer if post-processing, otherwise directly to screen
     gl.bindFramebuffer(gl.FRAMEBUFFER, postEnabled ? this.fbo : null);
@@ -944,6 +1032,11 @@ class Renderer {
     this.prevBack = tmp;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // Draw HUD overlay
+    if (hudData) {
+      this.drawHUD(hudData);
+    }
   }
 
   _createRenderTarget() {
@@ -1217,6 +1310,119 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW);
       gl.drawArrays(gl.LINE_STRIP, 0, 5);
     });
+  }
+
+  // Build vertex data for vector text
+  _buildTextVertices(text, x, y, scale, color) {
+    const verts = [];
+    const charWidth = 6 * scale;
+    let cursorX = x;
+
+    for (const char of text.toUpperCase()) {
+      const glyph = VECTOR_FONT[char];
+      if (glyph && glyph.length >= 4) {
+        // Each line segment is 4 values: x1, y1, x2, y2
+        for (let i = 0; i < glyph.length - 3; i += 4) {
+          const x1 = cursorX + glyph[i] * scale;
+          const y1 = y - glyph[i + 1] * scale;
+          const x2 = cursorX + glyph[i + 2] * scale;
+          const y2 = y - glyph[i + 3] * scale;
+          verts.push(x1, y1, ...color);
+          verts.push(x2, y2, ...color);
+        }
+      }
+      cursorX += charWidth;
+    }
+    return verts;
+  }
+
+  // Draw a small ship icon for lives display
+  _buildShipIcon(x, y, scale, color) {
+    const verts = [];
+    const shape = [
+      [0, 1.5], [-0.8, -1], [0, -0.5], [0.8, -1], [0, 1.5]
+    ];
+    for (let i = 0; i < shape.length - 1; i++) {
+      verts.push(x + shape[i][0] * scale, y + shape[i][1] * scale, ...color);
+      verts.push(x + shape[i + 1][0] * scale, y + shape[i + 1][1] * scale, ...color);
+    }
+    return verts;
+  }
+
+  drawHUD(hudData) {
+    const gl = this.gl;
+    const w = gl.canvas.width;
+    const h = gl.canvas.height;
+
+    gl.useProgram(this.hudProgram);
+    gl.bindVertexArray(this.hudVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.hudBuffer);
+
+    // Screen-space orthographic projection
+    const hudProj = ortho(0, w, 0, h, -1, 1);
+    gl.uniformMatrix4fv(this.hudProjLoc, false, hudProj);
+
+    const verts = [];
+    const scale = Math.max(2, Math.min(w, h) / 200);
+    const padding = 20;
+    const glowColor = [0.2, 1.0, 0.6]; // green vector glow
+    const dimColor = [0.1, 0.5, 0.3];
+
+    // Score - top left
+    const scoreText = `SCORE ${hudData.score.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
+    verts.push(...this._buildTextVertices(scoreText, padding, h - padding, scale, glowColor));
+
+    // Lives - draw ship icons
+    const livesY = h - padding - scale * 12;
+    verts.push(...this._buildTextVertices('LIVES', padding, livesY, scale, glowColor));
+    for (let i = 0; i < hudData.lives; i++) {
+      verts.push(...this._buildShipIcon(padding + scale * 40 + i * scale * 12, livesY - scale * 3, scale * 3, glowColor));
+    }
+
+    // Immortality indicator
+    if (hudData.immortal) {
+      verts.push(...this._buildTextVertices('IMMORTAL', w / 2 - scale * 24, h - padding, scale, [1.0, 0.8, 0.2]));
+    }
+
+    // Bottom decorative line
+    const lineY = padding;
+    verts.push(padding, lineY, ...dimColor);
+    verts.push(w - padding, lineY, ...dimColor);
+
+    // Top decorative line
+    const topLineY = h - padding - scale * 20;
+    verts.push(padding, topLineY, ...dimColor);
+    verts.push(w - padding, topLineY, ...dimColor);
+
+    // Corner accents
+    const cornerSize = 15;
+    // Bottom left
+    verts.push(padding, lineY, ...glowColor);
+    verts.push(padding, lineY + cornerSize, ...glowColor);
+    verts.push(padding, lineY, ...glowColor);
+    verts.push(padding + cornerSize, lineY, ...glowColor);
+    // Bottom right
+    verts.push(w - padding, lineY, ...glowColor);
+    verts.push(w - padding, lineY + cornerSize, ...glowColor);
+    verts.push(w - padding, lineY, ...glowColor);
+    verts.push(w - padding - cornerSize, lineY, ...glowColor);
+    // Top left
+    verts.push(padding, topLineY, ...glowColor);
+    verts.push(padding, topLineY - cornerSize, ...glowColor);
+    verts.push(padding, topLineY, ...glowColor);
+    verts.push(padding + cornerSize, topLineY, ...glowColor);
+    // Top right
+    verts.push(w - padding, topLineY, ...glowColor);
+    verts.push(w - padding, topLineY - cornerSize, ...glowColor);
+    verts.push(w - padding, topLineY, ...glowColor);
+    verts.push(w - padding - cornerSize, topLineY, ...glowColor);
+
+    if (verts.length > 0) {
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW);
+      gl.drawArrays(gl.LINES, 0, verts.length / 5);
+    }
+
+    gl.bindVertexArray(null);
   }
 }
 
@@ -1586,6 +1792,14 @@ export class Game {
   _render(thrusting) {
     resizeCanvasToDisplaySize(this.gl.canvas);
     this.renderer.setSize(this.gl.canvas.width, this.gl.canvas.height, this.cameraZoom);
+
+    // Build HUD data
+    const hudData = {
+      score: Math.floor(this.displayScore),
+      lives: this.ship.lives,
+      immortal: this.immortal,
+    };
+
     this.renderer.draw(
       this.level,
       this.ship,
@@ -1598,6 +1812,7 @@ export class Game {
       performance.now() / 1000,
       this.postEnabled,
       this.postConfig,
+      hudData,
     );
   }
 
