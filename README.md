@@ -12,11 +12,33 @@ Simple vibe-coded arcade game with WebGL rendering, CRT/VHS post-processing, and
 - Score with easing display, monster splits, particle explosions, exhaust particles, and enemy respawns.
 - Audio: randomized BGM track on first thrust, explosion/fire/pop/thrust SFX.
 
-## Running
+## Requirements
+
+- Python 3.10+
+- FastAPI
+- Uvicorn
+
+## Installation
+
+```bash
+# Create and activate virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -e .
+
+# Or install directly
+pip install fastapi "uvicorn[standard]"
 ```
+
+## Running
+
+```bash
 uvicorn app.main:app --reload
 ```
-Open http://127.0.0.1:8000/
+
+Open http://127.0.0.1:8000/ in a WebGL2-compatible browser.
 
 ## Controls
 - Rotate: A/D or Left/Right
@@ -27,9 +49,9 @@ Open http://127.0.0.1:8000/
 - (Post FX always on)
 
 ## Assets & Licenses
-- **Music**: All tunes generated using [Suno](https://suno.ai/) (`Zero-G Boss Rush*.mp3`, `Gravity Clash 1987*.mp3`, `intro.mp3`, `gameover.mp3`)
-- **Sound Effects**: All SFX generated using [ElevenLabs Sound Effects](https://elevenlabs.io/) (`explosion.mp3`, `laser.mp3`, `pop.mp3`, `thrust.mp3`)
-- **Images**: All pixel graphics generated using [OpenAI](https://openai.com/) image model (`blastoff.png`, `title.png`, `gameover.png`, `overlay*.png`)
+- **Music**: All tunes generated using [Suno](https://suno.ai/)
+- **Sound Effects**: All SFX generated using [ElevenLabs Sound Effects](https://elevenlabs.io/)
+- **Images**: All pixel graphics generated using [OpenAI](https://openai.com/) image model
 - **Code**: Vibe-coded using a mix of [OpenAI Codex](https://openai.com/codex) and [Claude Code](https://claude.ai/code)
 
 All code and shaders are part of this project (MIT-style unless otherwise specified by repository owner).

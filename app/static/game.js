@@ -211,6 +211,7 @@ uniform float u_staticNoise;
 uniform vec2 u_screenShake;
 uniform int u_colorLut;
 uniform float u_gamma;
+uniform float u_lensFlare;
 out vec4 outColor;
 
 // barrel distortion
@@ -310,6 +311,35 @@ vec3 staticNoiseBurst(vec2 uv, vec3 col, float intensity, float time) {
   return col;
 }
 
+// Lens flare effect
+vec3 lensFlare(vec2 uv, float intensity) {
+  if (intensity <= 0.0) return vec3(0.0);
+
+  vec3 flare = vec3(0.0);
+  vec2 center = vec2(0.5);
+
+  // Radial streak/halo around bright center
+  vec2 toCenter = center - uv;
+  float distFromCenter = length(toCenter);
+  vec3 centerSample = texture(u_scene, center).rgb;
+  float centerBright = dot(centerSample, vec3(0.299, 0.587, 0.114));
+  float halo = smoothstep(0.5, 0.0, distFromCenter) * smoothstep(0.3, 0.8, centerBright);
+  flare += centerSample * halo * 0.1;
+
+  // Anamorphic horizontal streak - sample horizontally and accumulate bright areas
+  for (float x = 0.0; x < 1.0; x += 0.05) {
+    vec3 s = texture(u_scene, vec2(x, uv.y)).rgb;
+    float bright = max(s.r, max(s.g, s.b));
+    if (bright > 0.5) {
+      float dist = abs(uv.x - x);
+      float streak = exp(-dist * 8.0) * bright;
+      flare += s * streak * 0.15;
+    }
+  }
+
+  return flare * intensity;
+}
+
 // Color LUT application
 vec3 applyColorLut(vec3 col, int lutIndex) {
   if (lutIndex == 1) {
@@ -391,6 +421,9 @@ void main() {
 
   // tone mapping
   col = ACESFilm(col * u_exposure);
+
+  // lens flare
+  col += lensFlare(uvCurved, u_lensFlare);
 
   // contrast
   col = (col - 0.5) * u_contrast + 0.5;
@@ -530,6 +563,7 @@ const POST_CONFIG = {
   screenShake: 1.0,
   colorLut: 0, // 0=none, 1=amber, 2=cool, 3=neon, 4=noir
   gamma: 1.0,
+  lensFlare: 0.3,
 };
 
 class DebugUI {
@@ -587,6 +621,7 @@ class DebugUI {
       { key: 'staticNoise', label: 'Static Noise', min: 0, max: 1, step: 0.05 },
       { key: 'screenShake', label: 'Screen Shake', min: 0, max: 2, step: 0.1 },
       { key: 'gamma', label: 'Gamma', min: 1.0, max: 3.0, step: 0.1 },
+      { key: 'lensFlare', label: 'Lens Flare', min: 0, max: 1, step: 0.05 },
     ];
 
     params.forEach((p) => {
@@ -910,6 +945,7 @@ class Renderer {
     this.postScreenShakeLoc = gl.getUniformLocation(this.postProgram, 'u_screenShake');
     this.postColorLutLoc = gl.getUniformLocation(this.postProgram, 'u_colorLut');
     this.postGammaLoc = gl.getUniformLocation(this.postProgram, 'u_gamma');
+    this.postLensFlareLoc = gl.getUniformLocation(this.postProgram, 'u_lensFlare');
 
     // Accumulation program for motion trails
     this.accumProgram = createProgram(gl, POST_VERTEX_SRC, ACCUM_FRAGMENT_SRC);
@@ -1094,6 +1130,7 @@ class Renderer {
     gl.uniform2f(this.postScreenShakeLoc, config.screenShakeX || 0, config.screenShakeY || 0);
     gl.uniform1i(this.postColorLutLoc, config.colorLut);
     gl.uniform1f(this.postGammaLoc, config.gamma);
+    gl.uniform1f(this.postLensFlareLoc, config.lensFlare);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindVertexArray(null);
