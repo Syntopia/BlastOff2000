@@ -1,5 +1,7 @@
 # Blast Off 2000
 
+Play now: https://syntopia.github.io/BlastOff2000/
+
 ![Screenshot](screenshot.png)
 
 Simple vibe-coded arcade game with WebGL rendering, CRT/VHS post-processing, and arcade-inspired audio.
@@ -12,33 +14,13 @@ Simple vibe-coded arcade game with WebGL rendering, CRT/VHS post-processing, and
 - Score with easing display, monster splits, particle explosions, exhaust particles, and enemy respawns.
 - Audio: randomized BGM track on first thrust, explosion/fire/pop/thrust SFX.
 
-## Requirements
-
-- Python 3.10+
-- FastAPI
-- Uvicorn
-
-## Installation
+## Running locally
 
 ```bash
-# Create and activate virtual environment (optional but recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -e .
-
-# Or install directly
-pip install fastapi "uvicorn[standard]"
+npx serve .
 ```
 
-## Running
-
-```bash
-uvicorn app.main:app --reload
-```
-
-Open http://127.0.0.1:8000/ in a WebGL2-compatible browser.
+Open http://localhost:3000/ in a WebGL2-compatible browser.
 
 ## Controls
 - Rotate: A/D or Left/Right
