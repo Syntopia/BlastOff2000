@@ -1,5 +1,7 @@
 # Blast Off 2000
 
+![Screenshot](screenshot.png)
+
 Simple vibe-coded arcade game with WebGL rendering, CRT/VHS post-processing, and arcade-inspired audio.
 
 ## Features
