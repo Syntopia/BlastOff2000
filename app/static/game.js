@@ -510,6 +510,17 @@ const ENEMY_SPAWNS = [
   { x: WORLD_CENTER.x, y: WORLD_CENTER.y + 100 },
   { x: WORLD_CENTER.x, y: WORLD_CENTER.y - 100 },
 ];
+const SNAKE_SPEED = 5;
+const SNAKE_INITIAL_UNITS = 5;
+const SNAKE_SEGMENT_RADIUS = 0.9;
+const SNAKE_SEGMENT_SPACING = 1.1;
+const SNAKE_GROWTH_UNITS = 3;
+const SNAKE_COLOR = [0.08, 0.08, 0.08];
+const SNAKE_SPAWNS = [
+  { x: WORLD_CENTER.x - 70, y: WORLD_CENTER.y + 80 },
+  { x: WORLD_CENTER.x + 85, y: WORLD_CENTER.y + 60 },
+  { x: WORLD_CENTER.x - 30, y: WORLD_CENTER.y - 95 },
+];
 
 const BULLET_SPEED = 55;
 const BULLET_RADIUS = 0.3;
@@ -544,6 +555,11 @@ const ROCKS = [
   { x: WORLD_CENTER.x - 70, y: WORLD_CENTER.y - 60, r: 6 },
   { x: WORLD_CENTER.x, y: WORLD_CENTER.y + 100, r: 9 },
 ];
+const ROCK_SPIKE_COUNT = 14;
+const ROCK_SPIKE_INNER = 0.62;
+const ROCK_SPIKE_OUTER = 1.28;
+const ROCK_CORE_SCALE = 0.35;
+const ROCK_SPIKE_COLOR = [0.9, 0.92, 0.96];
 
 const POST_CONFIG = {
   motionMix: 0.5,
@@ -873,6 +889,7 @@ class Level {
 
 class Enemy {
   constructor(pos, size = 4) {
+    this.kind = 'orb';
     this.pos = { ...pos };
     this.size = size; // 4, 2, or 1
     this.radius = size;
@@ -893,6 +910,43 @@ class Enemy {
       [1.0, 0.8, 0.4],
     ];
     this.color = palette[Math.floor(Math.random() * palette.length)];
+  }
+}
+
+function buildSnakeSegments(pos, lengthUnits, spacing, angle) {
+  const segments = [];
+  for (let i = 0; i < lengthUnits; i += 1) {
+    const offset = i * spacing;
+    segments.push({
+      x: pos.x - Math.cos(angle) * offset,
+      y: pos.y - Math.sin(angle) * offset,
+    });
+  }
+  return segments;
+}
+
+class Snake {
+  constructor(pos, lengthUnits = SNAKE_INITIAL_UNITS) {
+    this.kind = 'snake';
+    this.pos = { ...pos };
+    this.radius = SNAKE_SEGMENT_RADIUS;
+    this.lengthUnits = lengthUnits;
+    this.phase = Math.random() * Math.PI * 2;
+    this.speed = SNAKE_SPEED * (0.85 + Math.random() * 0.3);
+    this.spawnInvuln = 2.0;
+    this.patternTimer = 0;
+    this.color = [...SNAKE_COLOR];
+    const angle = Math.random() * Math.PI * 2;
+    this.segments = buildSnakeSegments(pos, lengthUnits, SNAKE_SEGMENT_SPACING, angle);
+  }
+
+  grow(units = SNAKE_GROWTH_UNITS) {
+    const count = Math.max(1, Math.floor(units));
+    for (let i = 0; i < count; i += 1) {
+      const tail = this.segments[this.segments.length - 1];
+      this.segments.push({ x: tail.x, y: tail.y });
+    }
+    this.lengthUnits += count;
   }
 }
 
@@ -1245,21 +1299,37 @@ class Renderer {
 
   _drawRocks(rocks, timeSec) {
     const gl = this.gl;
-    const segments = 18;
     rocks.forEach((r) => {
+      const segments = ROCK_SPIKE_COUNT * 2;
+      const spin = timeSec * (0.25 + 0.2 * Math.abs(Math.sin((r.x + r.y) * 0.07)));
+      const baseRot = (r.x - r.y) * 0.01;
+      const spikeColor = ROCK_SPIKE_COLOR;
       const verts = [];
-      verts.push(r.x, r.y, 0.6, 0.72, 0.82);
+      verts.push(r.x, r.y, 0.58, 0.7, 0.8);
       for (let i = 0; i <= segments; i += 1) {
-        const a = (i / segments) * Math.PI * 2;
-        const range = r.r * 0.08;
-        const pulsate = Math.sin(timeSec * 2.0 + r.x + r.y) * range;
-        const x = r.x + Math.cos(a) * (r.r + pulsate);
-        const y = r.y + Math.sin(a) * (r.r + pulsate);
-        verts.push(x, y, 0.5, 0.64, 0.74);
+        const a = (i / segments) * Math.PI * 2 + spin + baseRot;
+        const tooth = (i % 2 === 0) ? ROCK_SPIKE_OUTER : ROCK_SPIKE_INNER;
+        const rough = 0.05 * Math.sin(a * 6 + r.x * 0.2 + r.y * 0.15);
+        const radius = r.r * (tooth + rough);
+        const x = r.x + Math.cos(a) * radius;
+        const y = r.y + Math.sin(a) * radius;
+        verts.push(x, y, spikeColor[0], spikeColor[1], spikeColor[2]);
       }
-      const data = new Float32Array(verts);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STREAM_DRAW);
       gl.drawArrays(gl.TRIANGLE_FAN, 0, segments + 2);
+
+      const coreSegments = 16;
+      const coreVerts = [];
+      const coreR = r.r * ROCK_CORE_SCALE;
+      coreVerts.push(r.x, r.y, -0.35, -0.35, -0.35);
+      for (let i = 0; i <= coreSegments; i += 1) {
+        const a = (i / coreSegments) * Math.PI * 2 + spin * 0.4;
+        const x = r.x + Math.cos(a) * coreR;
+        const y = r.y + Math.sin(a) * coreR;
+        coreVerts.push(x, y, -0.35, -0.35, -0.35);
+      }
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coreVerts), gl.STREAM_DRAW);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, coreSegments + 2);
     });
   }
 
@@ -1351,6 +1421,35 @@ class Renderer {
     const gl = this.gl;
     const segments = 24;
     enemies.forEach((e) => {
+      if (e.kind === 'snake') {
+        const base = e.color;
+        e.segments.forEach((seg, idx) => {
+          const pulse = 0.85 + Math.sin(e.phase * 2.0 + idx * 0.7) * 0.18;
+          const radius = e.radius * pulse;
+          const core = 0.7 + pulse * 0.3;
+          gl.uniform2f(this.monsterCenterLoc, seg.x, seg.y);
+          gl.uniform1f(this.monsterRadiusLoc, radius);
+          const verts = [];
+          verts.push(seg.x, seg.y, base[0] * core, base[1] * core, base[2] * core);
+          for (let i = 0; i <= segments; i += 1) {
+            const a = (i / segments) * Math.PI * 2;
+            const x = seg.x + Math.cos(a) * radius;
+            const y = seg.y + Math.sin(a) * radius;
+            const shade = 0.8 + 0.2 * Math.sin(e.phase + i * 0.4 + idx * 0.3);
+            verts.push(
+              x,
+              y,
+              base[0] * shade,
+              base[1] * shade,
+              base[2] * shade
+            );
+          }
+          const data = new Float32Array(verts);
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+          gl.drawArrays(gl.TRIANGLE_FAN, 0, segments + 2);
+        });
+        return;
+      }
       gl.uniform2f(this.monsterCenterLoc, e.pos.x, e.pos.y);
       gl.uniform1f(this.monsterRadiusLoc, e.radius);
       const verts = [];
@@ -1693,7 +1792,9 @@ export class Game {
     this.renderer = new Renderer(gl);
     this.level = new Level();
     this.ship = new Ship();
-    this.enemies = ENEMY_SPAWNS.map((p) => new Enemy(p, 4));
+    const baseEnemies = ENEMY_SPAWNS.map((p) => new Enemy(p, 4));
+    const snakes = SNAKE_SPAWNS.map((p) => new Snake(p, SNAKE_INITIAL_UNITS));
+    this.enemies = [...baseEnemies, ...snakes];
     this.pendingRespawns = [];
     this.bullets = [];
     this.particles = [];
@@ -1733,6 +1834,11 @@ export class Game {
       gameover: { visible: false, alpha: 1 },
       lifeOverlay: { visible: false, alpha: 1, index: 1 },
     };
+    if (snakes.length > 0) {
+      const label = snakes.length === 1 ? 'snake' : 'snakes';
+      this._log(`Spawned ${snakes.length} ${label}`);
+    }
+    this._log('Rock render: rotating sawtooth with core disc');
     this._log('Game created');
   }
 
@@ -1950,6 +2056,13 @@ export class Game {
     if (this.ship.state !== 'playing' || this.ship.invuln > 0 || this.immortal) return;
     for (const e of this.enemies) {
       if (e.spawnInvuln > 0) continue; // Skip enemies that just spawned
+      if (e.kind === 'snake') {
+        if (this._snakeHitsShip(e)) {
+          this._crash('Caught by monster');
+          return;
+        }
+        continue;
+      }
       const dist = Math.hypot(e.pos.x - this.ship.pos.x, e.pos.y - this.ship.pos.y);
       if (dist < e.radius + SHIP_RADIUS * COLLISION_MARGIN) {
         this._crash('Caught by monster');
@@ -1958,11 +2071,27 @@ export class Game {
     }
   }
 
+  _snakeHitsShip(snake) {
+    for (const seg of snake.segments) {
+      const dist = Math.hypot(seg.x - this.ship.pos.x, seg.y - this.ship.pos.y);
+      if (dist < snake.radius + SHIP_RADIUS * COLLISION_MARGIN) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   _checkBulletHits() {
     const remainingEnemies = [];
     this.enemies.forEach((e) => {
+      if (e.kind === 'snake') {
+        this._applySnakeBulletHits(e);
+        remainingEnemies.push(e);
+        return;
+      }
       let hit = false;
       for (const b of this.bullets) {
+        if (b.life <= 0) continue;
         const dist = Math.hypot(e.pos.x - b.pos.x, e.pos.y - b.pos.y);
         if (dist < e.radius + BULLET_RADIUS * 1.2) {
           hit = true;
@@ -1989,6 +2118,41 @@ export class Game {
       }
     });
     this.enemies = remainingEnemies;
+  }
+
+  _applySnakeBulletHits(snake) {
+    let hitCount = 0;
+    for (const b of this.bullets) {
+      if (b.life <= 0) continue;
+      const hitPos = this._snakeHitPosition(snake, b);
+      if (!hitPos) continue;
+      this._handleSnakeHit(snake, hitPos);
+      b.life = 0;
+      hitCount += 1;
+    }
+    if (hitCount > 0) {
+      this._log(`Snake hit x${hitCount} -> length ${snake.lengthUnits}`);
+    }
+  }
+
+  _snakeHitPosition(snake, bullet) {
+    for (const seg of snake.segments) {
+      const dist = Math.hypot(seg.x - bullet.pos.x, seg.y - bullet.pos.y);
+      if (dist < snake.radius + BULLET_RADIUS * 1.2) {
+        return { x: seg.x, y: seg.y };
+      }
+    }
+    return null;
+  }
+
+  _handleSnakeHit(snake, hitPos) {
+    snake.grow(SNAKE_GROWTH_UNITS);
+    const impact = { pos: hitPos, radius: 4, size: 4 };
+    this._spawnEnemyExplosion(impact);
+    this._screenShakeIntensity = Math.max(this._screenShakeIntensity, 0.4);
+    const baseScore = SCORE_VALUES[4] || 0;
+    this._addScore(baseScore + this._scoreJitter());
+    this.onEnemyPop();
   }
 
   _land(pad) {
@@ -2085,6 +2249,10 @@ export class Game {
   _updateEnemies(dt) {
     const ship = this.ship;
     this.enemies.forEach((e) => {
+      if (e.kind === 'snake') {
+        this._updateSnake(e, dt);
+        return;
+      }
       // Update spawn invulnerability
       if (e.spawnInvuln > 0) e.spawnInvuln -= dt;
 
@@ -2159,6 +2327,52 @@ export class Game {
 
       e.phase += dt * (2.4 + Math.random() * 0.5);
     });
+  }
+
+  _updateSnake(snake, dt) {
+    if (snake.spawnInvuln > 0) snake.spawnInvuln -= dt;
+    snake.patternTimer += dt;
+
+    const head = snake.segments[0];
+    const dx = this.ship.pos.x - head.x;
+    const dy = this.ship.pos.y - head.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const sway = Math.sin(snake.patternTimer * 3.2 + snake.phase) * 2.0;
+    const speed = snake.speed;
+    const vx = ux * speed + (-uy) * sway;
+    const vy = uy * speed + (ux) * sway;
+
+    head.x += vx * dt;
+    head.y += vy * dt;
+
+    const cDx = head.x - WORLD_CENTER.x;
+    const cDy = head.y - WORLD_CENTER.y;
+    const cDist = Math.hypot(cDx, cDy);
+    const maxDist = CAVE_RADIUS - snake.radius - 5;
+    if (cDist > maxDist) {
+      head.x = WORLD_CENTER.x + (cDx / cDist) * maxDist;
+      head.y = WORLD_CENTER.y + (cDy / cDist) * maxDist;
+    }
+
+    for (let i = 1; i < snake.segments.length; i += 1) {
+      const prev = snake.segments[i - 1];
+      const seg = snake.segments[i];
+      const sdx = prev.x - seg.x;
+      const sdy = prev.y - seg.y;
+      const sDist = Math.hypot(sdx, sdy) || 1;
+      if (sDist > SNAKE_SEGMENT_SPACING) {
+        const pull = sDist - SNAKE_SEGMENT_SPACING;
+        seg.x += (sdx / sDist) * pull;
+        seg.y += (sdy / sDist) * pull;
+      }
+    }
+
+    snake.pos.x = head.x;
+    snake.pos.y = head.y;
+    snake.phase += dt * 2.2;
   }
 
   _updateBullets(dt) {
