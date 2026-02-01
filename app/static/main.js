@@ -48,6 +48,28 @@ function playSound(el, volume = 1.0, rate = 1.0) {
   a.play().catch(() => {});
 }
 
+// Explosion sound pool with limit and random pitch variation
+const activeExplosions = [];
+const MAX_EXPLOSIONS = 20;
+
+function playExplosion(el, baseVolume = 0.3, baseRate = 1.6) {
+  // Clean up finished sounds
+  for (let i = activeExplosions.length - 1; i >= 0; i--) {
+    if (activeExplosions[i].ended || activeExplosions[i].paused) {
+      activeExplosions.splice(i, 1);
+    }
+  }
+  // Limit simultaneous explosions
+  if (activeExplosions.length >= MAX_EXPLOSIONS) return;
+
+  const a = el.cloneNode(true);
+  a.volume = baseVolume;
+  // Random pitch variation: baseRate * (0.8 to 1.2)
+  a.playbackRate = baseRate * (0.8 + Math.random() * 0.4);
+  a.play().catch(() => {});
+  activeExplosions.push(a);
+}
+
 function playIntro() {
   if (!introAudio) return;
   introAudio.loop = true;
@@ -140,14 +162,14 @@ try {
       explosionAudio.play().catch(() => {});
     },
     () => {
-      playSound(laserAudio, 0.5);
+      playSound(laserAudio, 0.2);
     },
     () => {
-      // use explosion sample sped up for a sharp pop
-      playSound(explosionAudio, 0.3, 1.6);
+      // use explosion sample sped up for a sharp pop with random pitch
+      playExplosion(explosionAudio, 0.3, 1.6);
     },
     () => {
-      playSound(thrustAudio, 0.5, 0.5); // one octave deeper on first thrust tick
+      playSound(thrustAudio, 0.75, 0.5); // one octave deeper on first thrust tick
     },
     () => {
       game.inputLocked = true;
@@ -166,26 +188,29 @@ try {
   game.inputLocked = true;
   gameRef = game; // Set reference for overlay functions
   game.start();
-  const hideSplash = () => {
+  // First interaction: start intro audio (browsers block autoplay until user gesture)
+  // Second interaction: hide splash and start game
+  // If autoplay worked (introStarted=true), skip straight to starting game
+  let introUnlocked = introStarted;
+  const handleInteraction = () => {
+    if (!introUnlocked) {
+      // First interaction - unlock and play intro audio
+      playIntro();
+      introUnlocked = true;
+      // Don't hide splash yet - let intro play
+      return;
+    }
+    // Second interaction (or first if autoplay worked) - hide splash and start game
     game.hideOverlay('splash');
-    // Keep title visible during gameplay
     inputLocked = false;
     game.inputLocked = false;
-    window.removeEventListener('keydown', hideSplash);
-    window.removeEventListener('mousedown', hideSplash);
-    window.removeEventListener('touchstart', hideSplash);
+    window.removeEventListener('keydown', handleInteraction);
+    window.removeEventListener('mousedown', handleInteraction);
+    window.removeEventListener('touchstart', handleInteraction);
   };
-  window.addEventListener('keydown', hideSplash);
-  window.addEventListener('mousedown', hideSplash);
-  window.addEventListener('touchstart', hideSplash, { passive: true });
-
-  // In case autoplay was blocked, retry intro on first interaction until it succeeds.
-  const nudgeIntro = () => {
-    if (!introStarted) playIntro();
-  };
-  window.addEventListener('keydown', nudgeIntro, { once: true });
-  window.addEventListener('mousedown', nudgeIntro, { once: true });
-  window.addEventListener('touchstart', nudgeIntro, { once: true, passive: true });
+  window.addEventListener('keydown', handleInteraction);
+  window.addEventListener('mousedown', handleInteraction);
+  window.addEventListener('touchstart', handleInteraction, { passive: true });
 
   const restartHandler = () => {
     if (waitingForRestart && gameOverArmed) {

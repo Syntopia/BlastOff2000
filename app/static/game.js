@@ -843,6 +843,13 @@ class Enemy {
     this.radius = size;
     this.phase = Math.random() * Math.PI * 2;
     this.speed = ENEMY_SPEED * (0.85 + Math.random() * 0.3);
+    this.spawnInvuln = 2.0; // Can't kill player for 2 seconds after spawn
+    // Movement pattern: 0=chase, 1=orbit, 2=zigzag, 3=swoop, 4=spiral
+    this.pattern = Math.floor(Math.random() * 5);
+    this.patternTimer = 0;
+    this.orbitAngle = Math.random() * Math.PI * 2;
+    this.orbitDir = Math.random() > 0.5 ? 1 : -1;
+    this.swoopTarget = null;
     // base color per enemy
     const palette = [
       [1.0, 0.45, 0.55],
@@ -1116,7 +1123,7 @@ class Renderer {
 
     // Draw HUD overlay
     if (hudData) {
-      this.drawHUD(hudData, overlays);
+      this.drawHUD(hudData, overlays, timeSec);
     }
   }
 
@@ -1502,7 +1509,7 @@ class Renderer {
     return verts;
   }
 
-  drawHUD(hudData, overlays = null) {
+  drawHUD(hudData, overlays = null, timeSec = 0) {
     const gl = this.gl;
     const w = gl.canvas.width;
     const h = gl.canvas.height;
@@ -1510,6 +1517,9 @@ class Renderer {
     gl.useProgram(this.hudProgram);
     gl.bindVertexArray(this.hudVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.hudBuffer);
+
+    // Set line width (note: may not be supported on all hardware)
+    gl.lineWidth(2.0);
 
     // Screen-space orthographic projection
     const hudProj = ortho(0, w, 0, h, -1, 1);
@@ -1521,15 +1531,18 @@ class Renderer {
     const glowColor = [0.2, 1.0, 0.6]; // green vector glow
     const dimColor = [0.1, 0.5, 0.3];
 
-    // Show prompts for overlays
-    if (overlays && overlays.splash && overlays.splash.visible) {
+    // Blinking effect for prompts (on/off every 0.5 seconds)
+    const blinkOn = Math.sin(timeSec * 4) > 0;
+
+    // Show prompts for overlays - centered on screen with blinking
+    if (overlays && overlays.splash && overlays.splash.visible && blinkOn) {
       const promptText = 'PRESS ANY KEY TO START';
       const promptWidth = promptText.length * 6 * scale;
-      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.25, scale, glowColor));
-    } else if (overlays && overlays.gameover && overlays.gameover.visible) {
+      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.5, scale, glowColor));
+    } else if (overlays && overlays.gameover && overlays.gameover.visible && blinkOn) {
       const promptText = 'PRESS ANY KEY TO RESTART';
       const promptWidth = promptText.length * 6 * scale;
-      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.25, scale, glowColor));
+      verts.push(...this._buildTextVertices(promptText, w / 2 - promptWidth / 2, h * 0.5, scale, glowColor));
     }
 
     // Score - top left
@@ -1899,6 +1912,7 @@ export class Game {
   _checkEnemyCollision() {
     if (this.ship.state !== 'playing' || this.ship.invuln > 0 || this.immortal) return;
     for (const e of this.enemies) {
+      if (e.spawnInvuln > 0) continue; // Skip enemies that just spawned
       const dist = Math.hypot(e.pos.x - this.ship.pos.x, e.pos.y - this.ship.pos.y);
       if (dist < e.radius + SHIP_RADIUS * COLLISION_MARGIN) {
         this._crash('Caught by monster');
@@ -2034,22 +2048,79 @@ export class Game {
   _updateEnemies(dt) {
     const ship = this.ship;
     this.enemies.forEach((e) => {
+      // Update spawn invulnerability
+      if (e.spawnInvuln > 0) e.spawnInvuln -= dt;
+
       const dx = ship.pos.x - e.pos.x;
       const dy = ship.pos.y - e.pos.y;
       const len = Math.hypot(dx, dy) || 1;
       const ux = dx / len;
       const uy = dy / len;
-      const wobble = Math.sin(e.phase) * 1.2 * (1 + (4 - e.size) * 0.3);
+
+      let vx = 0, vy = 0;
       const speed = e.speed;
-      const vx = ux * speed + (-uy) * wobble;
-      const vy = uy * speed + (ux) * wobble;
+      e.patternTimer += dt;
+
+      switch (e.pattern) {
+        case 0: // Chase with wobble
+          const wobble = Math.sin(e.phase) * 1.5;
+          vx = ux * speed + (-uy) * wobble;
+          vy = uy * speed + (ux) * wobble;
+          break;
+
+        case 1: // Orbit around player
+          e.orbitAngle += e.orbitDir * dt * 1.5;
+          const orbitDist = 50 + Math.sin(e.phase) * 15;
+          const targetX = ship.pos.x + Math.cos(e.orbitAngle) * orbitDist;
+          const targetY = ship.pos.y + Math.sin(e.orbitAngle) * orbitDist;
+          const toDx = targetX - e.pos.x;
+          const toDy = targetY - e.pos.y;
+          const toLen = Math.hypot(toDx, toDy) || 1;
+          vx = (toDx / toLen) * speed * 1.2;
+          vy = (toDy / toLen) * speed * 1.2;
+          break;
+
+        case 2: // Zigzag approach
+          const zigzag = Math.sin(e.patternTimer * 4) * 2.5;
+          vx = ux * speed * 0.7 + (-uy) * zigzag * speed * 0.5;
+          vy = uy * speed * 0.7 + (ux) * zigzag * speed * 0.5;
+          break;
+
+        case 3: // Swoop - charge then retreat
+          const swoopCycle = e.patternTimer % 4;
+          if (swoopCycle < 2) {
+            // Charge fast
+            vx = ux * speed * 2.0;
+            vy = uy * speed * 2.0;
+          } else {
+            // Retreat slower
+            vx = -ux * speed * 0.8;
+            vy = -uy * speed * 0.8;
+          }
+          break;
+
+        case 4: // Spiral inward
+          const spiralAngle = Math.atan2(dy, dx) + Math.PI / 3;
+          const spiralSpeed = speed * (0.8 + 0.4 * Math.sin(e.phase));
+          vx = Math.cos(spiralAngle) * spiralSpeed;
+          vy = Math.sin(spiralAngle) * spiralSpeed;
+          break;
+      }
+
       e.pos.x += vx * dt;
       e.pos.y += vy * dt;
-      // Keep within world bounds
-      const r = e.radius;
-      e.pos.x = Math.min(Math.max(e.pos.x, r), WORLD.width - r);
-      e.pos.y = Math.min(Math.max(e.pos.y, r), WORLD.height - r);
-      e.phase += dt * (2.4 + Math.random() * 1.0);
+
+      // Keep within cave bounds (circular)
+      const cDx = e.pos.x - WORLD_CENTER.x;
+      const cDy = e.pos.y - WORLD_CENTER.y;
+      const cDist = Math.hypot(cDx, cDy);
+      const maxDist = CAVE_RADIUS - e.radius - 5;
+      if (cDist > maxDist) {
+        e.pos.x = WORLD_CENTER.x + (cDx / cDist) * maxDist;
+        e.pos.y = WORLD_CENTER.y + (cDy / cDist) * maxDist;
+      }
+
+      e.phase += dt * (2.4 + Math.random() * 0.5);
     });
   }
 

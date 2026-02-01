@@ -25,12 +25,9 @@ Open http://127.0.0.1:8000/
 - (Post FX always on)
 
 ## Assets & Licenses
-- `audio/explosion.mp3`: Explosion sound (source: OrangeFreeSounds, free for personal/commercial use with attribution). 
-- `audio/laser.mp3`: Laser shot (source: OrangeFreeSounds, free with attribution).
-- `audio/pop.mp3`: Pop/explosion (source: SoundBible “Blop” / free SFX with attribution).
-- `audio/thrust.wav`: Synthesized in-project (public domain for this project).
-- Theme tracks (`Zero-G Boss Rush*.mp3`, `Gravity Clash 1987*.mp3`): Suno AI–generated for this project (user-provided / project-only use).
-- `audio/gameover.mp3`: User-provided game over sting (project use).
-- Images: `blastoff.png`, `title.png`, `gameover.png` supplied by user for this project.
+- **Music**: All tunes generated using [Suno](https://suno.ai/) (`Zero-G Boss Rush*.mp3`, `Gravity Clash 1987*.mp3`, `intro.mp3`, `gameover.mp3`)
+- **Sound Effects**: All SFX generated using [ElevenLabs Sound Effects](https://elevenlabs.io/) (`explosion.mp3`, `laser.mp3`, `pop.mp3`, `thrust.mp3`)
+- **Images**: All pixel graphics generated using [OpenAI](https://openai.com/) image model (`blastoff.png`, `title.png`, `gameover.png`, `overlay*.png`)
+- **Code**: Vibe-coded using a mix of [OpenAI Codex](https://openai.com/codex) and [Claude Code](https://claude.ai/code)
 
-All other code and shaders are part of this project (MIT-style unless otherwise specified by repository owner).
+All code and shaders are part of this project (MIT-style unless otherwise specified by repository owner).
