@@ -148,3 +148,50 @@ html, body {
   object-fit: contain;
   filter: drop-shadow(0 6px 18px rgba(0,0,0,0.55));
 }
+
+#touch-controls {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 40vh;
+  display: none;
+  opacity: 1;
+  z-index: 4;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+
+.touch-btn {
+  position: absolute;
+  height: 20vh;
+  border: 1px solid rgba(226, 232, 240, 0.35);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  touch-action: none;
+  user-select: none;
+  pointer-events: auto;
+}
+
+#touch-left { left: 0; bottom: 0; width: 33.333%; }
+#touch-fire { left: 33.333%; bottom: 0; width: 33.333%; }
+#touch-right { left: 66.666%; bottom: 0; width: 33.333%; }
+
+#touch-thrust {
+  left: 33.333%;
+  bottom: 20vh;
+  width: 33.333%;
+}
+
+#touch-controls.touch-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  #touch-controls { display: block; }
+}

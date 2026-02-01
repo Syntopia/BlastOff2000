@@ -13,6 +13,7 @@ const splashEl = document.getElementById('splash');
 const gameoverEl = document.getElementById('gameover');
 const lifeOverlayEl = document.getElementById('life-overlay');
 const titleOverlayEl = document.getElementById('title-overlay');
+const touchControlsEl = document.getElementById('touch-controls');
 
 // Hide HTML overlays - using WebGL rendering instead
 if (splashEl) splashEl.style.display = 'none';
@@ -30,6 +31,7 @@ let gameOverArmed = false;
 let waitingForRestart = false;
 let inputLocked = true;
 let introStarted = false;
+let touchControlsTimer = null;
 const tracks = [
   'assets/audio/Zero-G Boss Rush.mp3',
   'assets/audio/Zero-G Boss Rush (1).mp3',
@@ -76,6 +78,14 @@ function playIntro() {
   introAudio.currentTime = 0;
   introAudio.volume = 1.0;
   introAudio.play().then(() => { introStarted = true; }).catch(() => {});
+}
+
+function scheduleTouchControlsFade() {
+  if (!touchControlsEl) return;
+  if (touchControlsTimer) return;
+  touchControlsTimer = setTimeout(() => {
+    touchControlsEl.classList.add('touch-hidden');
+  }, 5000);
 }
 
 function stopIntro() {
@@ -204,6 +214,7 @@ try {
     game.hideOverlay('splash');
     inputLocked = false;
     game.inputLocked = false;
+    scheduleTouchControlsFade();
     window.removeEventListener('keydown', handleInteraction);
     window.removeEventListener('mousedown', handleInteraction);
     window.removeEventListener('touchstart', handleInteraction);

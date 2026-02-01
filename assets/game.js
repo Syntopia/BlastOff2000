@@ -730,6 +730,7 @@ class InputController {
     this.toggleImmortality = false;
     this._bindKeyboard();
     this._bindTouch(canvas);
+    this._bindTouchHud();
   }
 
   consumeReset() {
@@ -825,6 +826,41 @@ class InputController {
       this.fire = false;
       e.preventDefault();
     }, { passive: false });
+  }
+
+  _bindTouchHud() {
+    const leftBtn = document.getElementById('touch-left');
+    const fireBtn = document.getElementById('touch-fire');
+    const rightBtn = document.getElementById('touch-right');
+    const thrustBtn = document.getElementById('touch-thrust');
+    const hasHud = leftBtn || fireBtn || rightBtn || thrustBtn;
+    if (!hasHud) return;
+    console.log('[Gravity] Touch HUD enabled');
+
+    const bindHold = (el, setter) => {
+      if (!el) return;
+      const onDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setter(true);
+        if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+      };
+      const onUp = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setter(false);
+        if (el.releasePointerCapture) el.releasePointerCapture(e.pointerId);
+      };
+      el.addEventListener('pointerdown', onDown, { passive: false });
+      el.addEventListener('pointerup', onUp, { passive: false });
+      el.addEventListener('pointercancel', onUp, { passive: false });
+      el.addEventListener('pointerleave', onUp, { passive: false });
+    };
+
+    bindHold(leftBtn, (down) => { this.left = down; });
+    bindHold(rightBtn, (down) => { this.right = down; });
+    bindHold(fireBtn, (down) => { this.fire = down; });
+    bindHold(thrustBtn, (down) => { this.thrust = down; });
   }
 }
 
